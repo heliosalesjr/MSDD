@@ -6,14 +6,27 @@ const SCALE_FACTOR := 3
 const CELL_PX := TILE_SIZE * SCALE_FACTOR
 const BOMB_COUNT := 15
 
+const KEY_SHEET := preload("res://minesweeper_tiles/KeyFly-Sheet.png")
+const KEY_FRAME_SIZE := 64
+const KEY_FRAME_COUNT := 4
+const KEY_ANIMATION_FPS := 6.0
+const KEY_POINTS := 100
+
 var tiles: Array = []
 var first_click_done: bool = false
 var game_over: bool = false
 var non_bomb_revealed: int = 0
 var non_bomb_total: int = 0
 
+var key_sprite: AnimatedSprite2D
+var key_pos: Vector2i
+var key_placed: bool = false
+var key_found: bool = false
+var score: int = 0
+
 func _ready() -> void:
 	_build_grid()
+	_setup_key_sprite()
 	_center_grid()
 	get_viewport().size_changed.connect(_center_grid)
 	_reset_game()
@@ -30,6 +43,24 @@ func _build_grid() -> void:
 			row.append(t)
 		tiles.append(row)
 
+func _setup_key_sprite() -> void:
+	var frames := SpriteFrames.new()
+	frames.set_animation_loop("default", true)
+	frames.set_animation_speed("default", KEY_ANIMATION_FPS)
+	for i in KEY_FRAME_COUNT:
+		var atlas := AtlasTexture.new()
+		atlas.atlas = KEY_SHEET
+		atlas.region = Rect2(i * KEY_FRAME_SIZE, 0, KEY_FRAME_SIZE, KEY_FRAME_SIZE)
+		frames.add_frame("default", atlas)
+
+	key_sprite = AnimatedSprite2D.new()
+	key_sprite.sprite_frames = frames
+	key_sprite.animation = "default"
+	key_sprite.scale = Vector2.ONE * (SCALE_FACTOR * 0.5)
+	key_sprite.visible = false
+	key_sprite.z_index = 1
+	add_child(key_sprite)
+
 func _center_grid() -> void:
 	var viewport_size := get_viewport_rect().size
 	var grid_px := GRID_SIZE * CELL_PX
@@ -40,10 +71,14 @@ func _reset_game() -> void:
 	game_over = false
 	non_bomb_revealed = 0
 	non_bomb_total = GRID_SIZE * GRID_SIZE - BOMB_COUNT
+	key_placed = false
+	key_found = false
+	key_sprite.visible = false
+	key_sprite.stop()
 	for row in tiles:
 		for t in row:
 			t.reset()
-	print("Nova partida — %d bombas. R pra reiniciar." % BOMB_COUNT)
+	print("Nova partida — %d bombas. R pra reiniciar. Score total: %d" % [BOMB_COUNT, score])
 
 func _place_bombs(safe_center: Vector2i) -> void:
 	var safe_zone := {}
@@ -68,6 +103,47 @@ func _place_bombs(safe_center: Vector2i) -> void:
 		for x in GRID_SIZE:
 			if not tiles[y][x].is_bomb:
 				tiles[y][x].adjacent_bombs = _count_adjacent_bombs(x, y)
+
+func _place_key(safe_center: Vector2i) -> void:
+	var safe_zone := {}
+	for dy in range(-1, 2):
+		for dx in range(-1, 2):
+			safe_zone[safe_center + Vector2i(dx, dy)] = true
+
+	var candidates: Array[Vector2i] = []
+	for y in GRID_SIZE:
+		for x in GRID_SIZE:
+			var p := Vector2i(x, y)
+			if safe_zone.has(p):
+				continue
+			var t: Tile = tiles[p.y][p.x]
+			if t.is_bomb:
+				continue
+			if t.adjacent_bombs < 1:
+				continue
+			candidates.append(p)
+
+	if candidates.is_empty():
+		push_warning("Nenhum candidato válido pra chave — placement pulado")
+		return
+
+	candidates.shuffle()
+	key_pos = candidates[0]
+	key_placed = true
+	tiles[key_pos.y][key_pos.x].has_key = true
+
+	for dy in range(-1, 2):
+		for dx in range(-1, 2):
+			if dx == 0 and dy == 0:
+				continue
+			var np := key_pos + Vector2i(dx, dy)
+			if np.x < 0 or np.x >= GRID_SIZE or np.y < 0 or np.y >= GRID_SIZE:
+				continue
+			var nt: Tile = tiles[np.y][np.x]
+			if not nt.is_bomb:
+				nt.is_gold_adjacent = true
+
+	key_sprite.position = Vector2(key_pos) * CELL_PX + Vector2.ONE * CELL_PX * 0.5
 
 func _count_adjacent_bombs(cx: int, cy: int) -> int:
 	var n := 0
@@ -112,6 +188,7 @@ func _handle_left(x: int, y: int) -> void:
 
 	if not first_click_done:
 		_place_bombs(Vector2i(x, y))
+		_place_key(Vector2i(x, y))
 		first_click_done = true
 
 	if t.is_bomb:
@@ -119,6 +196,7 @@ func _handle_left(x: int, y: int) -> void:
 		return
 
 	_flood_reveal(x, y)
+	_check_key_found()
 	_check_win()
 
 func _handle_right(x: int, y: int) -> void:
@@ -146,6 +224,17 @@ func _flood_reveal(sx: int, sy: int) -> void:
 						continue
 					queue.push_back(Vector2i(nx, ny))
 
+func _check_key_found() -> void:
+	if not key_placed or key_found:
+		return
+	var t: Tile = tiles[key_pos.y][key_pos.x]
+	if t.state == Tile.State.REVEALED:
+		key_found = true
+		score += KEY_POINTS
+		key_sprite.visible = true
+		key_sprite.play()
+		print("Chave encontrada! +%d pts (total: %d)" % [KEY_POINTS, score])
+
 func _lose(exploded_tile: Tile) -> void:
 	game_over = true
 	exploded_tile.show_as_exploded()
@@ -157,7 +246,10 @@ func _lose(exploded_tile: Tile) -> void:
 				t.show_as_bomb()
 			elif not t.is_bomb and t.state == Tile.State.FLAGGED:
 				t.show_as_wrong_flag()
-	print("Boom! R pra reiniciar.")
+	if key_placed and not key_found:
+		key_sprite.visible = true
+		key_sprite.play()
+	print("Boom! R pra reiniciar. Score total: %d" % score)
 
 func _check_win() -> void:
 	if non_bomb_revealed >= non_bomb_total:
@@ -166,4 +258,4 @@ func _check_win() -> void:
 			for t in row:
 				if t.is_bomb and t.state != Tile.State.FLAGGED:
 					t.flag()
-		print("Vitória! R pra reiniciar.")
+		print("Vitória! R pra reiniciar. Score total: %d" % score)

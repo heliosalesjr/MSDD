@@ -22,10 +22,14 @@ const TEX_NUMBERS := [
 	preload("res://minesweeper_tiles/revealed_tile_8.png"),
 ]
 
+const GOLD_TINT := Color(1.3, 1.1, 0.6)
+
 var state: State = State.HIDDEN
 var grid_pos: Vector2i
 var is_bomb: bool = false
 var adjacent_bombs: int = 0
+var has_key: bool = false
+var is_gold_adjacent: bool = false
 
 func _ready() -> void:
 	centered = false
@@ -58,23 +62,30 @@ func flag() -> void:
 
 func show_as_bomb() -> void:
 	state = State.REVEALED
+	modulate = Color.WHITE
 	texture = TEX_BOMB
 
 func show_as_exploded() -> void:
 	state = State.REVEALED
+	modulate = Color.WHITE
 	texture = TEX_EXPLODED
 
 func show_as_wrong_flag() -> void:
 	state = State.REVEALED
+	modulate = Color.WHITE
 	texture = TEX_WRONG_FLAG
 
 func reset() -> void:
 	state = State.HIDDEN
 	is_bomb = false
 	adjacent_bombs = 0
+	has_key = false
+	is_gold_adjacent = false
+	modulate = Color.WHITE
 	_update_visual()
 
 func _update_visual() -> void:
+	modulate = Color.WHITE
 	match state:
 		State.HIDDEN:
 			texture = TEX_HIDDEN
@@ -85,7 +96,9 @@ func _update_visual() -> void:
 		State.REVEALED:
 			if is_bomb:
 				texture = TEX_BOMB
-			elif adjacent_bombs == 0:
+			elif has_key or adjacent_bombs == 0:
 				texture = TEX_REVEALED_EMPTY
 			else:
 				texture = TEX_NUMBERS[adjacent_bombs]
+			if is_gold_adjacent and not is_bomb:
+				modulate = GOLD_TINT
