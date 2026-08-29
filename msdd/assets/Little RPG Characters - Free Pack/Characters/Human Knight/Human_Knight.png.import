@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://c63c4wmcncwmc"
-path="res://.godot/imported/revealed_tile_4.png-cfb9adaeac51f6f6a175d37f8a51c78d.ctex"
+uid="uid://de7822mvqa73r"
+path="res://.godot/imported/Human_Knight.png-cd344b15b1a2c07fa5d11444a156abe8.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://minesweeper_tiles/revealed_tile_4.png"
-dest_files=["res://.godot/imported/revealed_tile_4.png-cfb9adaeac51f6f6a175d37f8a51c78d.ctex"]
+source_file="res://assets/Little RPG Characters - Free Pack/Characters/Human Knight/Human_Knight.png"
+dest_files=["res://.godot/imported/Human_Knight.png-cd344b15b1a2c07fa5d11444a156abe8.ctex"]
 
 [params]
 

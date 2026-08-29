@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://dxk4vruhrkeko"
-path="res://.godot/imported/revealed_tile_8.png-aff9dfac9248e71b0bb170f21e4270ad.ctex"
+uid="uid://caysb34oxu10h"
+path="res://.godot/imported/revealed_tile_2.png-c2d0eeb4496044296b2884550cea3711.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://minesweeper_tiles/revealed_tile_8.png"
-dest_files=["res://.godot/imported/revealed_tile_8.png-aff9dfac9248e71b0bb170f21e4270ad.ctex"]
+source_file="res://assets/minesweeper_tiles/revealed_tile_2.png"
+dest_files=["res://.godot/imported/revealed_tile_2.png-c2d0eeb4496044296b2884550cea3711.ctex"]
 
 [params]
 

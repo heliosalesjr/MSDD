@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://b8yjumh5x2jdg"
-path="res://.godot/imported/masked_tile_flag_gold.png-e8c9376c5ab65c421979fb2009ae74a2.ctex"
+uid="uid://dw73x6s4l5uw3"
+path="res://.godot/imported/Human_Archer_Extras.png-201cb7e8a7adcd1531c970c7139db4e6.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://minesweeper_tiles/masked_tile_flag_gold.png"
-dest_files=["res://.godot/imported/masked_tile_flag_gold.png-e8c9376c5ab65c421979fb2009ae74a2.ctex"]
+source_file="res://assets/Little RPG Characters - Free Pack/Characters/Human Archer/Human_Archer_Extras.png"
+dest_files=["res://.godot/imported/Human_Archer_Extras.png-201cb7e8a7adcd1531c970c7139db4e6.ctex"]
 
 [params]
 

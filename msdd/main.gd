@@ -6,7 +6,7 @@ const SCALE_FACTOR := 3
 const CELL_PX := TILE_SIZE * SCALE_FACTOR
 const BOMB_COUNT := 15
 
-const KEY_SHEET := preload("res://minesweeper_tiles/KeyFly-Sheet.png")
+const KEY_SHEET := preload("res://assets/minesweeper_tiles/KeyFly-Sheet.png")
 const KEY_FRAME_SIZE := 64
 const KEY_FRAME_COUNT := 4
 const KEY_ANIMATION_FPS := 6.0

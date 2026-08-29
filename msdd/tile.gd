@@ -3,23 +3,23 @@ extends Sprite2D
 
 enum State { HIDDEN, REVEALED, FLAGGED, QUESTIONED }
 
-const TEX_HIDDEN := preload("res://minesweeper_tiles/masked_tile.png")
-const TEX_REVEALED_EMPTY := preload("res://minesweeper_tiles/revealed_tile.png")
-const TEX_FLAG := preload("res://minesweeper_tiles/masked_tile_flag.png")
-const TEX_QUESTION := preload("res://minesweeper_tiles/masked_tile_question_mark.png")
-const TEX_BOMB := preload("res://minesweeper_tiles/revealed_tile_bomb.png")
-const TEX_EXPLODED := preload("res://minesweeper_tiles/tile_exploded.png")
-const TEX_WRONG_FLAG := preload("res://minesweeper_tiles/tile_not_mine.png")
+const TEX_HIDDEN := preload("res://assets/minesweeper_tiles/masked_tile.png")
+const TEX_REVEALED_EMPTY := preload("res://assets/minesweeper_tiles/revealed_tile.png")
+const TEX_FLAG := preload("res://assets/minesweeper_tiles/masked_tile_flag.png")
+const TEX_QUESTION := preload("res://assets/minesweeper_tiles/masked_tile_question_mark.png")
+const TEX_BOMB := preload("res://assets/minesweeper_tiles/revealed_tile_bomb.png")
+const TEX_EXPLODED := preload("res://assets/minesweeper_tiles/tile_exploded.png")
+const TEX_WRONG_FLAG := preload("res://assets/minesweeper_tiles/tile_not_mine.png")
 const TEX_NUMBERS := [
 	null,
-	preload("res://minesweeper_tiles/revealed_tile_1.png"),
-	preload("res://minesweeper_tiles/revealed_tile_2.png"),
-	preload("res://minesweeper_tiles/revealed_tile_3.png"),
-	preload("res://minesweeper_tiles/revealed_tile_4.png"),
-	preload("res://minesweeper_tiles/revealed_tile_5.png"),
-	preload("res://minesweeper_tiles/revealed_tile_6.png"),
-	preload("res://minesweeper_tiles/revealed_tile_7.png"),
-	preload("res://minesweeper_tiles/revealed_tile_8.png"),
+	preload("res://assets/minesweeper_tiles/revealed_tile_1.png"),
+	preload("res://assets/minesweeper_tiles/revealed_tile_2.png"),
+	preload("res://assets/minesweeper_tiles/revealed_tile_3.png"),
+	preload("res://assets/minesweeper_tiles/revealed_tile_4.png"),
+	preload("res://assets/minesweeper_tiles/revealed_tile_5.png"),
+	preload("res://assets/minesweeper_tiles/revealed_tile_6.png"),
+	preload("res://assets/minesweeper_tiles/revealed_tile_7.png"),
+	preload("res://assets/minesweeper_tiles/revealed_tile_8.png"),
 ]
 
 const GOLD_TINT := Color(1.3, 1.1, 0.6)
