@@ -22,17 +22,20 @@ const TEX_NUMBERS := [
 	preload("res://assets/minesweeper_tiles/revealed_tile_8.png"),
 ]
 
-const GOLD_TINT := Color(1.3, 1.1, 0.6)
+const GOLD_SHADER := preload("res://tile_gold.gdshader")
 
 var state: State = State.HIDDEN
 var grid_pos: Vector2i
 var is_bomb: bool = false
 var adjacent_bombs: int = 0
 var has_key: bool = false
-var is_gold_adjacent: bool = false
+var gold_rect: Rect2 = Rect2()
 
 func _ready() -> void:
 	centered = false
+	var mat := ShaderMaterial.new()
+	mat.shader = GOLD_SHADER
+	material = mat
 	_update_visual()
 
 func reveal() -> bool:
@@ -80,12 +83,13 @@ func reset() -> void:
 	is_bomb = false
 	adjacent_bombs = 0
 	has_key = false
-	is_gold_adjacent = false
+	gold_rect = Rect2()
 	modulate = Color.WHITE
 	_update_visual()
 
 func _update_visual() -> void:
 	modulate = Color.WHITE
+	var effective_gold := Vector4.ZERO
 	match state:
 		State.HIDDEN:
 			texture = TEX_HIDDEN
@@ -100,5 +104,6 @@ func _update_visual() -> void:
 				texture = TEX_REVEALED_EMPTY
 			else:
 				texture = TEX_NUMBERS[adjacent_bombs]
-			if is_gold_adjacent and not is_bomb:
-				modulate = GOLD_TINT
+			if not is_bomb and gold_rect.size.x > 0.0 and gold_rect.size.y > 0.0:
+				effective_gold = Vector4(gold_rect.position.x, gold_rect.position.y, gold_rect.size.x, gold_rect.size.y)
+	(material as ShaderMaterial).set_shader_parameter("gold_rect", effective_gold)

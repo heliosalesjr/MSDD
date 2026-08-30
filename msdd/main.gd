@@ -1,16 +1,18 @@
 extends Node2D
 
-const GRID_SIZE := 10
+const GRID_WIDTH := 24
+const GRID_HEIGHT := 14
 const TILE_SIZE := 16
-const SCALE_FACTOR := 3
+const SCALE_FACTOR := 2
 const CELL_PX := TILE_SIZE * SCALE_FACTOR
-const BOMB_COUNT := 15
+const BOMB_COUNT := 50
 
 const KEY_SHEET := preload("res://assets/minesweeper_tiles/KeyFly-Sheet.png")
 const KEY_FRAME_SIZE := 64
 const KEY_FRAME_COUNT := 4
 const KEY_ANIMATION_FPS := 6.0
 const KEY_POINTS := 100
+const KEY_SCALE := 1.5
 
 const TIME_LIMIT := 15.0
 const ADVANCE_DELAY := 1.0
@@ -52,9 +54,9 @@ func _ready() -> void:
 	_reset_run()
 
 func _build_grid() -> void:
-	for y in GRID_SIZE:
+	for y in GRID_HEIGHT:
 		var row: Array = []
-		for x in GRID_SIZE:
+		for x in GRID_WIDTH:
 			var t := Tile.new()
 			t.grid_pos = Vector2i(x, y)
 			t.position = Vector2(x, y) * CELL_PX
@@ -76,7 +78,7 @@ func _setup_key_sprite() -> void:
 	key_sprite = AnimatedSprite2D.new()
 	key_sprite.sprite_frames = frames
 	key_sprite.animation = "default"
-	key_sprite.scale = Vector2.ONE * (SCALE_FACTOR * 0.5)
+	key_sprite.scale = Vector2.ONE * KEY_SCALE
 	key_sprite.visible = false
 	key_sprite.z_index = 1
 	add_child(key_sprite)
@@ -132,8 +134,8 @@ func _setup_ui() -> void:
 
 func _center_grid() -> void:
 	var viewport_size := get_viewport_rect().size
-	var grid_px := GRID_SIZE * CELL_PX
-	base_position = ((viewport_size - Vector2(grid_px, grid_px)) * 0.5).floor()
+	var grid_px := Vector2(GRID_WIDTH, GRID_HEIGHT) * CELL_PX
+	base_position = ((viewport_size - grid_px) * 0.5).floor()
 	position = base_position
 
 func _reset_run() -> void:
@@ -148,7 +150,7 @@ func _new_dungeon() -> void:
 	game_over = false
 	advancing = false
 	non_bomb_revealed = 0
-	non_bomb_total = GRID_SIZE * GRID_SIZE - BOMB_COUNT
+	non_bomb_total = GRID_WIDTH * GRID_HEIGHT - BOMB_COUNT
 	key_placed = false
 	key_found = false
 	key_sprite.visible = false
@@ -170,8 +172,8 @@ func _place_bombs(safe_center: Vector2i) -> void:
 			safe_zone[safe_center + Vector2i(dx, dy)] = true
 
 	var candidates: Array[Vector2i] = []
-	for y in GRID_SIZE:
-		for x in GRID_SIZE:
+	for y in GRID_HEIGHT:
+		for x in GRID_WIDTH:
 			var p := Vector2i(x, y)
 			if not safe_zone.has(p):
 				candidates.append(p)
@@ -182,8 +184,8 @@ func _place_bombs(safe_center: Vector2i) -> void:
 		var p: Vector2i = candidates[i]
 		tiles[p.y][p.x].is_bomb = true
 
-	for y in GRID_SIZE:
-		for x in GRID_SIZE:
+	for y in GRID_HEIGHT:
+		for x in GRID_WIDTH:
 			if not tiles[y][x].is_bomb:
 				tiles[y][x].adjacent_bombs = _count_adjacent_bombs(x, y)
 
@@ -194,8 +196,8 @@ func _place_key(safe_center: Vector2i) -> void:
 			safe_zone[safe_center + Vector2i(dx, dy)] = true
 
 	var candidates: Array[Vector2i] = []
-	for y in GRID_SIZE:
-		for x in GRID_SIZE:
+	for y in GRID_HEIGHT:
+		for x in GRID_WIDTH:
 			var p := Vector2i(x, y)
 			if safe_zone.has(p):
 				continue
@@ -213,20 +215,40 @@ func _place_key(safe_center: Vector2i) -> void:
 	candidates.shuffle()
 	key_pos = candidates[0]
 	key_placed = true
-	tiles[key_pos.y][key_pos.x].has_key = true
+	var key_tile: Tile = tiles[key_pos.y][key_pos.x]
+	key_tile.has_key = true
+	key_tile.gold_rect = Rect2(0.0, 0.0, 1.0, 1.0)
 
 	for dy in range(-1, 2):
 		for dx in range(-1, 2):
 			if dx == 0 and dy == 0:
 				continue
 			var np := key_pos + Vector2i(dx, dy)
-			if np.x < 0 or np.x >= GRID_SIZE or np.y < 0 or np.y >= GRID_SIZE:
+			if np.x < 0 or np.x >= GRID_WIDTH or np.y < 0 or np.y >= GRID_HEIGHT:
 				continue
 			var nt: Tile = tiles[np.y][np.x]
-			if not nt.is_bomb:
-				nt.is_gold_adjacent = true
+			if nt.is_bomb:
+				continue
+			nt.gold_rect = _rect_toward(-dx, -dy)
 
 	key_sprite.position = Vector2(key_pos) * CELL_PX + Vector2.ONE * CELL_PX * 0.5
+
+func _rect_toward(tx: int, ty: int) -> Rect2:
+	var rx := 0.0
+	var ry := 0.0
+	var rw := 1.0
+	var rh := 1.0
+	if tx > 0:
+		rx = 0.5
+		rw = 0.5
+	elif tx < 0:
+		rw = 0.5
+	if ty > 0:
+		ry = 0.5
+		rh = 0.5
+	elif ty < 0:
+		rh = 0.5
+	return Rect2(rx, ry, rw, rh)
 
 func _count_adjacent_bombs(cx: int, cy: int) -> int:
 	var n := 0
@@ -236,7 +258,7 @@ func _count_adjacent_bombs(cx: int, cy: int) -> int:
 				continue
 			var nx: int = cx + dx
 			var ny: int = cy + dy
-			if nx < 0 or nx >= GRID_SIZE or ny < 0 or ny >= GRID_SIZE:
+			if nx < 0 or nx >= GRID_WIDTH or ny < 0 or ny >= GRID_HEIGHT:
 				continue
 			if tiles[ny][nx].is_bomb:
 				n += 1
@@ -306,7 +328,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	var local := to_local(event.position)
 	var gx := int(local.x / CELL_PX)
 	var gy := int(local.y / CELL_PX)
-	if gx < 0 or gx >= GRID_SIZE or gy < 0 or gy >= GRID_SIZE:
+	if gx < 0 or gx >= GRID_WIDTH or gy < 0 or gy >= GRID_HEIGHT:
 		return
 
 	match event.button_index:
@@ -356,7 +378,7 @@ func _flood_reveal(sx: int, sy: int) -> void:
 						continue
 					var nx: int = p.x + dx
 					var ny: int = p.y + dy
-					if nx < 0 or nx >= GRID_SIZE or ny < 0 or ny >= GRID_SIZE:
+					if nx < 0 or nx >= GRID_WIDTH or ny < 0 or ny >= GRID_HEIGHT:
 						continue
 					queue.push_back(Vector2i(nx, ny))
 
