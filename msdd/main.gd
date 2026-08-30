@@ -46,7 +46,9 @@ var ui_layer: CanvasLayer
 var timer_label: Label
 var keys_label: Label
 var danger_overlay: ColorRect
-var win_overlay: Control
+var end_overlay: Control
+var end_message_label: Label
+var end_subtitle_label: Label
 
 func _ready() -> void:
 	_build_grid()
@@ -117,27 +119,71 @@ func _setup_ui() -> void:
 	keys_label.text = "0 / %d" % KEYS_TO_WIN
 	ui_layer.add_child(keys_label)
 
-	win_overlay = Control.new()
-	win_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
-	win_overlay.visible = false
-	win_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_build_end_overlay()
 
-	var win_bg := ColorRect.new()
-	win_bg.color = Color(0, 0, 0, 0.92)
-	win_bg.set_anchors_preset(Control.PRESET_FULL_RECT)
-	win_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	win_overlay.add_child(win_bg)
+func _build_end_overlay() -> void:
+	end_overlay = Control.new()
+	end_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	end_overlay.visible = false
 
-	var win_label := Label.new()
-	win_label.text = "YOU WIN!\n\n(R pra reiniciar)"
-	win_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	win_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	win_label.add_theme_font_size_override("font_size", 72)
-	win_label.set_anchors_preset(Control.PRESET_FULL_RECT)
-	win_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	win_overlay.add_child(win_label)
+	var backdrop := ColorRect.new()
+	backdrop.color = Color(0, 0, 0, 0.55)
+	backdrop.set_anchors_preset(Control.PRESET_FULL_RECT)
+	backdrop.mouse_filter = Control.MOUSE_FILTER_STOP
+	end_overlay.add_child(backdrop)
 
-	ui_layer.add_child(win_overlay)
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	end_overlay.add_child(center)
+
+	var panel := PanelContainer.new()
+	center.add_child(panel)
+
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 48)
+	margin.add_theme_constant_override("margin_right", 48)
+	margin.add_theme_constant_override("margin_top", 32)
+	margin.add_theme_constant_override("margin_bottom", 32)
+	panel.add_child(margin)
+
+	var vbox := VBoxContainer.new()
+	vbox.alignment = BoxContainer.ALIGNMENT_CENTER
+	vbox.add_theme_constant_override("separation", 20)
+	margin.add_child(vbox)
+
+	end_message_label = Label.new()
+	end_message_label.text = ""
+	end_message_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	end_message_label.add_theme_font_size_override("font_size", 56)
+	vbox.add_child(end_message_label)
+
+	end_subtitle_label = Label.new()
+	end_subtitle_label.text = ""
+	end_subtitle_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	end_subtitle_label.add_theme_font_size_override("font_size", 20)
+	end_subtitle_label.modulate = Color(0.85, 0.85, 0.85)
+	vbox.add_child(end_subtitle_label)
+
+	var button_row := HBoxContainer.new()
+	button_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	button_row.add_theme_constant_override("separation", 20)
+	vbox.add_child(button_row)
+
+	var menu_button := Button.new()
+	menu_button.text = "Voltar ao menu"
+	menu_button.custom_minimum_size = Vector2(180, 50)
+	menu_button.add_theme_font_size_override("font_size", 18)
+	menu_button.pressed.connect(_on_menu_pressed)
+	button_row.add_child(menu_button)
+
+	var quit_button := Button.new()
+	quit_button.text = "Quit"
+	quit_button.custom_minimum_size = Vector2(180, 50)
+	quit_button.add_theme_font_size_override("font_size", 18)
+	quit_button.pressed.connect(_on_quit_pressed)
+	button_row.add_child(quit_button)
+
+	ui_layer.add_child(end_overlay)
 
 func _center_grid() -> void:
 	var viewport_size := get_viewport_rect().size
@@ -159,7 +205,7 @@ func _reset_run() -> void:
 	timer_running = false
 	position = base_position
 	danger_overlay.color.a = 0.0
-	win_overlay.visible = false
+	end_overlay.visible = false
 	for row in tiles:
 		for t in row:
 			t.reset()
@@ -434,7 +480,8 @@ func _timeout() -> void:
 	position = base_position
 	danger_overlay.color.a = 0.0
 	_reveal_board_on_loss()
-	print("Tempo esgotado! R pra reiniciar. Score final: %d" % score)
+	_show_end("GAME OVER", "Tempo esgotado. Score: %d" % score)
+	print("Tempo esgotado! Score final: %d" % score)
 
 func _lose(exploded_tile: Tile) -> void:
 	game_over = true
@@ -443,7 +490,8 @@ func _lose(exploded_tile: Tile) -> void:
 	danger_overlay.color.a = 0.0
 	exploded_tile.show_as_exploded()
 	_reveal_board_on_loss(exploded_tile)
-	print("Boom! R pra reiniciar. Score final: %d" % score)
+	_show_end("GAME OVER", "Boom! Score: %d" % score)
+	print("Boom! Score final: %d" % score)
 
 func _reveal_board_on_loss(exploded_tile: Tile = null) -> void:
 	for row in tiles:
@@ -463,5 +511,16 @@ func _win_run() -> void:
 	timer_running = false
 	position = base_position
 	danger_overlay.color.a = 0.0
-	win_overlay.visible = true
+	_show_end("YOU WIN!", "Score final: %d" % score)
 	print("YOU WIN! Score final: %d" % score)
+
+func _show_end(main_text: String, subtitle_text: String) -> void:
+	end_message_label.text = main_text
+	end_subtitle_label.text = subtitle_text
+	end_overlay.visible = true
+
+func _on_menu_pressed() -> void:
+	get_tree().change_scene_to_file("res://menu.tscn")
+
+func _on_quit_pressed() -> void:
+	get_tree().quit()
