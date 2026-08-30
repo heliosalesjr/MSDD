@@ -13,29 +13,32 @@ const KEY_FRAME_COUNT := 4
 const KEY_ANIMATION_FPS := 6.0
 const KEY_POINTS := 100
 const KEY_SCALE := 1.5
+const KEYS_TO_WIN := 5
+const KEY_MIN_DISTANCE := 4
+
+const KEY_COLORS := [
+	Color(1.2, 0.4, 0.4),    # vermelho
+	Color(0.4, 0.6, 1.2),    # azul
+	Color(0.4, 1.2, 0.4),    # verde
+	Color(1.2, 1.2, 0.4),    # amarelo
+	Color(0.75, 0.75, 0.8),  # cinza
+]
 
 const TIME_LIMIT := 15.0
-const ADVANCE_DELAY := 1.0
-const KEYS_TO_ADVANCE := 5
 
 var tiles: Array = []
 var first_click_done: bool = false
 var game_over: bool = false
-var non_bomb_revealed: int = 0
-var non_bomb_total: int = 0
+var won_run: bool = false
 
-var key_sprite: AnimatedSprite2D
-var key_pos: Vector2i
-var key_placed: bool = false
-var key_found: bool = false
+var key_sprites: Array[AnimatedSprite2D] = []
+var key_positions: Array[Vector2i] = []
+var keys_found_flags: Array[bool] = []
+var keys_found_count: int = 0
 var score: int = 0
 
 var time_remaining: float = 0.0
 var timer_running: bool = false
-var advancing: bool = false
-var advance_timer: float = 0.0
-var keys_found_this_run: int = 0
-var won_run: bool = false
 
 var base_position: Vector2 = Vector2.ZERO
 
@@ -43,11 +46,11 @@ var ui_layer: CanvasLayer
 var timer_label: Label
 var keys_label: Label
 var danger_overlay: ColorRect
-var coming_soon_overlay: Control
+var win_overlay: Control
 
 func _ready() -> void:
 	_build_grid()
-	_setup_key_sprite()
+	_setup_key_sprites()
 	_setup_ui()
 	_center_grid()
 	get_viewport().size_changed.connect(_center_grid)
@@ -65,7 +68,7 @@ func _build_grid() -> void:
 			row.append(t)
 		tiles.append(row)
 
-func _setup_key_sprite() -> void:
+func _setup_key_sprites() -> void:
 	var frames := SpriteFrames.new()
 	frames.set_animation_loop("default", true)
 	frames.set_animation_speed("default", KEY_ANIMATION_FPS)
@@ -75,13 +78,17 @@ func _setup_key_sprite() -> void:
 		atlas.region = Rect2(i * KEY_FRAME_SIZE, 0, KEY_FRAME_SIZE, KEY_FRAME_SIZE)
 		frames.add_frame("default", atlas)
 
-	key_sprite = AnimatedSprite2D.new()
-	key_sprite.sprite_frames = frames
-	key_sprite.animation = "default"
-	key_sprite.scale = Vector2.ONE * KEY_SCALE
-	key_sprite.visible = false
-	key_sprite.z_index = 1
-	add_child(key_sprite)
+	for i in KEYS_TO_WIN:
+		var s := AnimatedSprite2D.new()
+		s.sprite_frames = frames
+		s.animation = "default"
+		s.scale = Vector2.ONE * KEY_SCALE
+		s.visible = false
+		s.z_index = 1
+		s.modulate = KEY_COLORS[i]
+		s.play()
+		add_child(s)
+		key_sprites.append(s)
 
 func _setup_ui() -> void:
 	ui_layer = CanvasLayer.new()
@@ -107,30 +114,30 @@ func _setup_ui() -> void:
 	keys_label.position = Vector2(20, 20)
 	keys_label.add_theme_font_size_override("font_size", 24)
 	keys_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	keys_label.text = "0 / %d" % KEYS_TO_ADVANCE
+	keys_label.text = "0 / %d" % KEYS_TO_WIN
 	ui_layer.add_child(keys_label)
 
-	coming_soon_overlay = Control.new()
-	coming_soon_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
-	coming_soon_overlay.visible = false
-	coming_soon_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	win_overlay = Control.new()
+	win_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	win_overlay.visible = false
+	win_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
-	var cs_bg := ColorRect.new()
-	cs_bg.color = Color(0, 0, 0, 0.92)
-	cs_bg.set_anchors_preset(Control.PRESET_FULL_RECT)
-	cs_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	coming_soon_overlay.add_child(cs_bg)
+	var win_bg := ColorRect.new()
+	win_bg.color = Color(0, 0, 0, 0.92)
+	win_bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	win_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	win_overlay.add_child(win_bg)
 
-	var cs_label := Label.new()
-	cs_label.text = "COMING SOON\n\n(R pra reiniciar)"
-	cs_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	cs_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	cs_label.add_theme_font_size_override("font_size", 48)
-	cs_label.set_anchors_preset(Control.PRESET_FULL_RECT)
-	cs_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	coming_soon_overlay.add_child(cs_label)
+	var win_label := Label.new()
+	win_label.text = "YOU WIN!\n\n(R pra reiniciar)"
+	win_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	win_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	win_label.add_theme_font_size_override("font_size", 72)
+	win_label.set_anchors_preset(Control.PRESET_FULL_RECT)
+	win_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	win_overlay.add_child(win_label)
 
-	ui_layer.add_child(coming_soon_overlay)
+	ui_layer.add_child(win_overlay)
 
 func _center_grid() -> void:
 	var viewport_size := get_viewport_rect().size
@@ -139,31 +146,25 @@ func _center_grid() -> void:
 	position = base_position
 
 func _reset_run() -> void:
-	keys_found_this_run = 0
-	won_run = false
-	score = 0
-	coming_soon_overlay.visible = false
-	_new_dungeon()
-
-func _new_dungeon() -> void:
 	first_click_done = false
 	game_over = false
-	advancing = false
-	non_bomb_revealed = 0
-	non_bomb_total = GRID_WIDTH * GRID_HEIGHT - BOMB_COUNT
-	key_placed = false
-	key_found = false
-	key_sprite.visible = false
-	key_sprite.stop()
+	won_run = false
+	keys_found_count = 0
+	key_positions.clear()
+	keys_found_flags.clear()
+	for s in key_sprites:
+		s.visible = false
+	score = 0
 	time_remaining = TIME_LIMIT
 	timer_running = false
 	position = base_position
 	danger_overlay.color.a = 0.0
+	win_overlay.visible = false
 	for row in tiles:
 		for t in row:
 			t.reset()
 	_update_ui()
-	print("Dungeon %d/%d — %d bombas. Score: %d" % [keys_found_this_run + 1, KEYS_TO_ADVANCE, BOMB_COUNT, score])
+	print("Nova partida — %d bombas, %d chaves." % [BOMB_COUNT, KEYS_TO_WIN])
 
 func _place_bombs(safe_center: Vector2i) -> void:
 	var safe_zone := {}
@@ -189,7 +190,7 @@ func _place_bombs(safe_center: Vector2i) -> void:
 			if not tiles[y][x].is_bomb:
 				tiles[y][x].adjacent_bombs = _count_adjacent_bombs(x, y)
 
-func _place_key(safe_center: Vector2i) -> void:
+func _place_keys(safe_center: Vector2i) -> void:
 	var safe_zone := {}
 	for dy in range(-1, 2):
 		for dx in range(-1, 2):
@@ -208,30 +209,68 @@ func _place_key(safe_center: Vector2i) -> void:
 				continue
 			candidates.append(p)
 
-	if candidates.is_empty():
-		push_warning("Nenhum candidato válido pra chave — placement pulado")
+	if candidates.size() < KEYS_TO_WIN:
+		push_warning("Poucos candidatos pra 5 chaves (%d)" % candidates.size())
 		return
 
-	candidates.shuffle()
-	key_pos = candidates[0]
-	key_placed = true
-	var key_tile: Tile = tiles[key_pos.y][key_pos.x]
+	var placed: Array[Vector2i] = []
+	var min_dist := KEY_MIN_DISTANCE
+	while placed.size() < KEYS_TO_WIN and min_dist >= 3:
+		placed = _try_place_keys(candidates, min_dist)
+		if placed.size() < KEYS_TO_WIN:
+			min_dist -= 1
+
+	if placed.size() < KEYS_TO_WIN:
+		push_warning("Placement incompleto: %d chaves posicionadas" % placed.size())
+
+	for i in placed.size():
+		_apply_key_placement(i, placed[i])
+
+func _try_place_keys(candidates: Array[Vector2i], min_dist: int) -> Array[Vector2i]:
+	var result: Array[Vector2i] = []
+	var attempts_per_key := 100
+	for _key_idx in KEYS_TO_WIN:
+		var placed_this := false
+		for _try in attempts_per_key:
+			var c: Vector2i = candidates[randi() % candidates.size()]
+			var valid := true
+			for prev in result:
+				if maxi(absi(c.x - prev.x), absi(c.y - prev.y)) < min_dist:
+					valid = false
+					break
+			if valid:
+				result.append(c)
+				placed_this = true
+				break
+		if not placed_this:
+			return result
+	return result
+
+func _apply_key_placement(idx: int, pos: Vector2i) -> void:
+	key_positions.append(pos)
+	keys_found_flags.append(false)
+	var color: Color = KEY_COLORS[idx]
+
+	var key_tile: Tile = tiles[pos.y][pos.x]
 	key_tile.has_key = true
-	key_tile.gold_rect = Rect2(0.0, 0.0, 1.0, 1.0)
+	key_tile.hint_rect = Rect2(0.0, 0.0, 1.0, 1.0)
+	key_tile.hint_color = color
 
 	for dy in range(-1, 2):
 		for dx in range(-1, 2):
 			if dx == 0 and dy == 0:
 				continue
-			var np := key_pos + Vector2i(dx, dy)
+			var np := pos + Vector2i(dx, dy)
 			if np.x < 0 or np.x >= GRID_WIDTH or np.y < 0 or np.y >= GRID_HEIGHT:
 				continue
 			var nt: Tile = tiles[np.y][np.x]
 			if nt.is_bomb:
 				continue
-			nt.gold_rect = _rect_toward(-dx, -dy)
+			nt.hint_rect = _rect_toward(-dx, -dy)
+			nt.hint_color = color
 
-	key_sprite.position = Vector2(key_pos) * CELL_PX + Vector2.ONE * CELL_PX * 0.5
+	var sprite: AnimatedSprite2D = key_sprites[idx]
+	sprite.position = Vector2(pos) * CELL_PX + Vector2.ONE * CELL_PX * 0.5
 
 func _rect_toward(tx: int, ty: int) -> Rect2:
 	var rx := 0.0
@@ -265,17 +304,7 @@ func _count_adjacent_bombs(cx: int, cy: int) -> int:
 	return n
 
 func _process(delta: float) -> void:
-	if advancing:
-		advance_timer -= delta
-		if advance_timer <= 0.0:
-			advancing = false
-			if keys_found_this_run >= KEYS_TO_ADVANCE:
-				_win_run()
-			else:
-				_new_dungeon()
-		return
-
-	if timer_running and not game_over:
+	if timer_running and not game_over and not won_run:
 		time_remaining -= delta
 		if time_remaining <= 0.0:
 			time_remaining = 0.0
@@ -306,7 +335,7 @@ func _update_dramatic_effects() -> void:
 
 func _update_ui() -> void:
 	timer_label.text = "%0.1f" % time_remaining
-	keys_label.text = "%d / %d" % [keys_found_this_run, KEYS_TO_ADVANCE]
+	keys_label.text = "%d / %d" % [keys_found_count, KEYS_TO_WIN]
 
 	var color := Color.WHITE
 	if time_remaining < 5.0:
@@ -320,7 +349,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		_reset_run()
 		return
 
-	if game_over or advancing or won_run:
+	if game_over or won_run:
 		return
 	if not (event is InputEventMouseButton) or not event.pressed:
 		return
@@ -344,7 +373,7 @@ func _handle_left(x: int, y: int) -> void:
 
 	if not first_click_done:
 		_place_bombs(Vector2i(x, y))
-		_place_key(Vector2i(x, y))
+		_place_keys(Vector2i(x, y))
 		first_click_done = true
 		timer_running = true
 
@@ -353,9 +382,7 @@ func _handle_left(x: int, y: int) -> void:
 		return
 
 	_flood_reveal(x, y)
-	_check_key_found()
-	if not advancing:
-		_check_win()
+	_check_keys_found()
 
 func _handle_right(x: int, y: int) -> void:
 	tiles[y][x].cycle_mark()
@@ -369,8 +396,7 @@ func _flood_reveal(sx: int, sy: int) -> void:
 			continue
 		if t.is_bomb:
 			continue
-		if t.reveal():
-			non_bomb_revealed += 1
+		t.reveal()
 		if t.adjacent_bombs == 0:
 			for dy in range(-1, 2):
 				for dx in range(-1, 2):
@@ -382,21 +408,25 @@ func _flood_reveal(sx: int, sy: int) -> void:
 						continue
 					queue.push_back(Vector2i(nx, ny))
 
-func _check_key_found() -> void:
-	if not key_placed or key_found:
-		return
-	var t: Tile = tiles[key_pos.y][key_pos.x]
-	if t.state != Tile.State.REVEALED:
-		return
-	key_found = true
-	keys_found_this_run += 1
-	score += KEY_POINTS
-	key_sprite.visible = true
-	key_sprite.play()
-	timer_running = false
-	advancing = true
-	advance_timer = ADVANCE_DELAY
-	print("Chave %d/%d encontrada! +%d pts (total: %d)" % [keys_found_this_run, KEYS_TO_ADVANCE, KEY_POINTS, score])
+func _check_keys_found() -> void:
+	var any_found := false
+	for i in key_positions.size():
+		if keys_found_flags[i]:
+			continue
+		var t: Tile = tiles[key_positions[i].y][key_positions[i].x]
+		if t.state != Tile.State.REVEALED:
+			continue
+		keys_found_flags[i] = true
+		keys_found_count += 1
+		score += KEY_POINTS
+		key_sprites[i].visible = true
+		any_found = true
+		print("Chave %d/%d encontrada!" % [keys_found_count, KEYS_TO_WIN])
+
+	if any_found:
+		time_remaining = TIME_LIMIT
+		if keys_found_count >= KEYS_TO_WIN:
+			_win_run()
 
 func _timeout() -> void:
 	game_over = true
@@ -424,24 +454,14 @@ func _reveal_board_on_loss(exploded_tile: Tile = null) -> void:
 				t.show_as_bomb()
 			elif not t.is_bomb and t.state == Tile.State.FLAGGED:
 				t.show_as_wrong_flag()
-	if key_placed and not key_found:
-		key_sprite.visible = true
-		key_sprite.play()
-
-func _check_win() -> void:
-	if non_bomb_revealed >= non_bomb_total:
-		game_over = true
-		timer_running = false
-		for row in tiles:
-			for t in row:
-				if t.is_bomb and t.state != Tile.State.FLAGGED:
-					t.flag()
-		print("Board limpo! (chave já foi contabilizada) Score: %d" % score)
+	for i in key_positions.size():
+		if not keys_found_flags[i]:
+			key_sprites[i].visible = true
 
 func _win_run() -> void:
 	won_run = true
 	timer_running = false
 	position = base_position
 	danger_overlay.color.a = 0.0
-	coming_soon_overlay.visible = true
-	print("VITÓRIA — 5 chaves! Coming Soon. R pra reiniciar. Score final: %d" % score)
+	win_overlay.visible = true
+	print("YOU WIN! Score final: %d" % score)
