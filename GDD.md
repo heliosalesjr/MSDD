@@ -1,7 +1,8 @@
-# MSDD — Game Design Document (v0.1 / Foundational)
+# MSDD — Game Design Document (v0.2 / Foundational + Proto Snapshot)
 
 > Rascunho inicial. Compila as decisões fundamentais tomadas em sessão de brainstorming.
 > Tudo aqui é revisável — o objetivo é servir de âncora conceitual, não de contrato.
+> **Atualização 2026-08-30:** adicionada §15 com o estado atual do protótipo técnico (Minesweeper + caça-chaves). Seções 1-14 permanecem como visão conceitual — o proto ainda não implementa a camada D&D.
 
 ---
 
@@ -190,4 +191,101 @@ Coisas que **ainda não decidimos** e que vão precisar de resposta antes ou dur
 2. Definir algoritmo de **geração procedural** (item mais arriscado tecnicamente).
 3. Fechar **atributos e sistema de dado detalhado** (o quanto o jogador consegue prever suas rolagens).
 4. Sketch de **UI/UX** — o desafio é caber "número + ícone + estado da célula" com legibilidade.
-5. Escolher versão do Godot e montar projeto base.
+5. Escolher versão do Godot e montar projeto base. *(feito — Godot 4.7, ver §15)*
+
+---
+
+## 15. Estado do Protótipo (Ago/2026)
+
+**Escopo do protótipo.** Camada técnica isolada — Minesweeper puro com mecânica de "caça-chaves". Valida tech (grid, input, shader, timer, UI, transição de cena) antes de amarrar as camadas de D&D descritas nas §§1-11.
+
+### 15.1 O que existe
+
+**`menu.tscn` — menu inicial**
+- Título "MSDD" + subtítulo "Minesweeper × D&D".
+- Botão "1 — Jogar" (ativo, atalhos `1`/`Enter`).
+- Botão "2 — Em construção" (disabled).
+
+**`main.tscn` — cena de jogo**
+- Grid **24×14 landscape** (336 células), tile art 16×16 renderizado a scale 2 → 32px onscreen.
+- **50 bombas** (~15% densidade).
+- **First click safe + zero** — bombas plantadas depois do primeiro clique, excluindo a célula clicada + 8 vizinhas → sempre abre uma área ≥ 3×3.
+- Flood-fill BFS iterativo em células vazias.
+- Right-click cicla `HIDDEN → FLAGGED → QUESTIONED → HIDDEN`. Bandeira protege left-click, `?` não.
+- **5 chaves coloridas** (vermelho, azul, verde, amarelo, cinza) espalhadas na dungeon:
+  - Cada chave num tile não-bomba com ao menos 1 bomba adjacente.
+  - Distância mínima Chebyshev ≥ 4 entre chaves (fallback 3), garantindo zero overlap de indicadores.
+  - Nunca no safe zone do primeiro clique.
+- **Indicador visual das chaves** via shader `tile_hint.gdshader`:
+  - Tile da chave: 100% tint na cor.
+  - Ortogonais adjacentes: metade da tile na cor, no lado que aponta pra chave.
+  - Diagonais: quarto na tile, no canto que aponta pra chave.
+- **Timer de 15s** por chave. Reseta a cada find mas **continua correndo** (não pausa).
+- **Score +100** por chave achada.
+- **Dramaticidade escalonada** conforme timer:
+  - < 10s: cor do timer amarela.
+  - < 7.5s: red overlay pulsante intensificando.
+  - < 5s: cor do timer vermelha.
+  - < 3s: screen shake, amplitude crescente.
+- **Fim de partida** (win/lose): overlay modal com backdrop dim (55%), box centralizado com mensagem + subtítulo, botões "Voltar ao menu" e "Quit".
+  - **Win:** 5 chaves → "YOU WIN!" + score final.
+  - **Bomb:** clicou bomba → "GAME OVER" + "Boom!" + score.
+  - **Timeout:** timer chegou a 0 → "GAME OVER" + "Tempo esgotado" + score.
+  - Board revelado no lose (bombas + chaves não encontradas), tal como Minesweeper clássico.
+- **Atalho `R`** reseta a partida a qualquer momento (não anunciado na UI).
+
+**Estrutura de arquivos:**
+```
+msdd/
+├── menu.tscn / menu.gd         # entry point
+├── main.tscn / main.gd         # cena de jogo
+├── tile.gd                     # Sprite2D + estado por célula
+├── tile_hint.gdshader          # canvas_item shader pra hint colorido parcial
+├── project.godot               # viewport 1280×720, filter nearest, main_scene = menu
+└── assets/
+    ├── minesweeper_tiles/      # PNG 16×16 (hidden, revealed, flags, números, bombas)
+    │   └── KeyFly-Sheet.png    # sprite sheet 4 frames × 64×64
+    └── Little RPG Characters/  # Human_Knight, Human_Archer (não usados ainda)
+```
+
+### 15.2 Distância do GDD conceitual
+
+O protótipo **não é** o MSDD descrito nos §§1-11. É um teste técnico. Principais gaps:
+
+| Aspecto | Conceito (GDD) | Protótipo |
+|---------|----------------|-----------|
+| Camada RPG | HP, mana, 2d6, combate, magia, santuário, classes | Nada disso ainda |
+| Grid | Procedural irregular, salas + corredores | Retangular fechado 24×14 |
+| Herói | Avatar visível com posição, movimento célula-a-célula | Cursor (herói implícito) |
+| Objetivo | Escada de saída em dungeon procedural | 5 chaves espalhadas |
+| Coisas notáveis | 4+ tipos (inimigo, baú, armadilha, santuário) + ícones | 1 tipo (bomba) |
+| Tempo | Turnos discretos consumidos por ações | Timer real-time em segundos |
+| Pistas | Número + ícone temático por tipo | Só número + cor de hint da chave |
+
+### 15.3 O que foi validado tecnicamente
+
+- Grid clickable + per-tile shader material funciona sem gargalo em Godot 4.7.
+- Flood-fill em 24×14 é instantâneo.
+- Shader UV-region → hint colorido é **generalizável** pra múltiplos tipos de "coisa notável" (basta trocar `hint_color` por tile).
+- Modal end-game com PanelContainer + CenterContainer é padrão bom, aplicável a outras telas futuras (santuário, loot, level-up).
+- Transição de cena via `change_scene_to_file` é fluida.
+- Setup programático de UI (sem editar `.tscn` no editor) escala bem pra prototipagem rápida.
+
+### 15.4 Gaps notados durante o proto
+
+- **`modulate` multiplicativo não dessatura** — a chave "cinza" ficou sutil demais. Cores neutras vão precisar de shader de luminance, não modulate.
+- **Fonte padrão do Godot** é o gargalo estético mais visível. Pixel font resolveria grande parte do "cheiro de engine test".
+- **Timer 15s + grid grande** é apertado — jogador mal tem tempo de escanear. Quando entrar a camada de turnos do GDD, o modelo temporal precisa ser redesenhado.
+- **Chord click** (§7 do `MINESWEEPER_REFERENCE.md`) não foi implementado — pode virar relevante se o board escalar pra tamanho Expert ou se turnos ficarem caros.
+
+### 15.5 Próximos passos (post-proto)
+
+Sugestões pra próxima iteração, na ordem crítica:
+1. **Herói no grid** — Sprite2D visível (`Human_Knight` já tá nos assets), posição inicial no safe zone, movimento por clique em célula adjacente. Primeira ponte com §4 do GDD.
+2. **Sistema mínimo de recursos** — HP e/ou turnos. Substituir o timer real-time por turnos consumidos por movimento. Alinha com §9 do GDD.
+3. **Ícones temáticos nas células** (§5.2) — trocar/complementar os números por número + ícone. Começar por 1-2 tipos além de bomba (ex: baú).
+4. **Múltiplos tipos de "coisa notável"** — generalizar o placement pra suportar N tipos com contagens/hint colors separadas.
+5. **Fonte pixel + refino visual** — resolver o gap estético.
+6. **Chord click** — quando o board ficar denso o suficiente pra justificar.
+
+Racional da ordem: herói + turnos é a ponte conceitual mais importante (transforma o Minesweeper em RPG). Ícones e múltiplos tipos vêm depois, quando a mecânica base tá firme.
