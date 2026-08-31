@@ -45,17 +45,21 @@ func _build_menu() -> void:
 	vbox.add_child(btn1)
 
 	var btn2 := Button.new()
-	btn2.text = "2 — Em construção"
+	btn2.text = "2 — Exploração (proto)"
 	btn2.custom_minimum_size = Vector2(320, 60)
 	btn2.add_theme_font_size_override("font_size", 26)
-	btn2.disabled = true
-	btn2.modulate = Color(0.6, 0.6, 0.6)
+	btn2.pressed.connect(_on_explore_pressed)
 	vbox.add_child(btn2)
 
 func _on_play_pressed() -> void:
 	get_tree().change_scene_to_file("res://main.tscn")
 
+func _on_explore_pressed() -> void:
+	get_tree().change_scene_to_file("res://explore.tscn")
+
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed:
 		if event.keycode == KEY_1 or event.keycode == KEY_ENTER or event.keycode == KEY_KP_ENTER:
 			_on_play_pressed()
+		elif event.keycode == KEY_2:
+			_on_explore_pressed()
