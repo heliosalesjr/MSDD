@@ -1,23 +1,31 @@
 extends Node2D
 
-const CHUNK_W := 13
-const CHUNK_H := 9
+const CHUNK_W := 24
+const CHUNK_H := 14
 const TILE_SIZE := 16
 const SCALE_FACTOR := 2
 const CELL_PX := TILE_SIZE * SCALE_FACTOR
-const CHUNK_BOMBS := 12
+const CHUNK_BOMBS := 35
 const KNIGHT_SCALE := 2
 
 const PORTAL_COLOR := Color(0.3, 0.7, 1.4)
+
+const AXIS_VERTICAL := 0    # portais N/S
+const AXIS_HORIZONTAL := 1  # portais E/W
+
+const NO_CHUNK := Vector2i(2147483647, 2147483647)
 
 const KnightScene := preload("res://knight.tscn")
 
 var world_tiles: Dictionary = {}         # Vector2i (world tile) -> Tile
 var chunks_spawned: Dictionary = {}      # Vector2i (chunk coord) -> true
+var chunk_orientation: Dictionary = {}   # Vector2i (chunk coord) -> AXIS_*
+var chunk_entry: Dictionary = {}         # Vector2i (chunk coord) -> Vector2i (world tile)
 var portals_by_pos: Dictionary = {}      # Vector2i (world tile) -> true
 
 var knight: CharacterBody2D
 var game_over: bool = false
+var first_click_done: bool = false
 
 var world_root: Node2D
 var background: ColorRect
@@ -136,38 +144,53 @@ func _spawn_knight() -> void:
 	knight.set_tile(center)
 	knight.reached_target.connect(_on_knight_reached)
 
-	# Reveal center tile so BFS has a starting point that's revealed
 	var t: Tile = world_tiles[center]
 	if not t.is_bomb and t.state != Tile.State.REVEALED:
 		t.reveal()
 
-	# Camera attached to knight
 	var cam := Camera2D.new()
 	cam.position_smoothing_enabled = true
 	cam.position_smoothing_speed = 5.0
 	cam.make_current()
 	knight.add_child(cam)
 
-func _spawn_chunk(chunk_coord: Vector2i) -> void:
+func _spawn_chunk(chunk_coord: Vector2i, entry_from: Vector2i = NO_CHUNK) -> void:
 	if chunks_spawned.has(chunk_coord):
 		return
 	chunks_spawned[chunk_coord] = true
 
 	var origin: Vector2i = chunk_coord * Vector2i(CHUNK_W, CHUNK_H)
 
-	var portal_locals: Array[Vector2i] = [
-		Vector2i(CHUNK_W / 2, 0),
-		Vector2i(CHUNK_W / 2, CHUNK_H - 1),
-		Vector2i(0, CHUNK_H / 2),
-		Vector2i(CHUNK_W - 1, CHUNK_H / 2),
-	]
+	var axis: int = AXIS_VERTICAL if (randi() % 2) == 0 else AXIS_HORIZONTAL
+	chunk_orientation[chunk_coord] = axis
+
+	var portal_locals: Array[Vector2i] = []
+	if axis == AXIS_VERTICAL:
+		portal_locals = [
+			Vector2i(CHUNK_W / 2, 0),
+			Vector2i(CHUNK_W / 2, CHUNK_H - 1),
+		]
+	else:
+		portal_locals = [
+			Vector2i(0, CHUNK_H / 2),
+			Vector2i(CHUNK_W - 1, CHUNK_H / 2),
+		]
+
 	var portal_worlds: Array[Vector2i] = []
 	for pl in portal_locals:
 		portal_worlds.append(origin + pl)
 
-	var center_world: Vector2i = origin + Vector2i(CHUNK_W / 2, CHUNK_H / 2)
+	# Entry tile — where player lands when arriving in this chunk
+	var entry_world: Vector2i
+	if entry_from == NO_CHUNK:
+		entry_world = origin + Vector2i(CHUNK_W / 2, CHUNK_H / 2)
+	else:
+		var from_chunk_coord: Vector2i = _world_to_chunk(entry_from)
+		var direction: Vector2i = chunk_coord - from_chunk_coord
+		entry_world = entry_from + direction
+	chunk_entry[chunk_coord] = entry_world
 
-	# Safe positions: portals + neighbors, and center + neighbors
+	# Safe zone: 3x3 around each portal + 3x3 around entry
 	var safe_set := {}
 	for pw in portal_worlds:
 		for dy in [-1, 0, 1]:
@@ -175,9 +198,9 @@ func _spawn_chunk(chunk_coord: Vector2i) -> void:
 				safe_set[pw + Vector2i(dx, dy)] = true
 	for dy in [-1, 0, 1]:
 		for dx in [-1, 0, 1]:
-			safe_set[center_world + Vector2i(dx, dy)] = true
+			safe_set[entry_world + Vector2i(dx, dy)] = true
 
-	# Create tiles for this chunk
+	# Create tiles
 	for local_y in CHUNK_H:
 		for local_x in CHUNK_W:
 			var wp: Vector2i = origin + Vector2i(local_x, local_y)
@@ -188,7 +211,7 @@ func _spawn_chunk(chunk_coord: Vector2i) -> void:
 			world_root.add_child(t)
 			world_tiles[wp] = t
 
-	# Place bombs on non-safe cells
+	# Place bombs (candidates = non-safe tiles in this chunk)
 	var candidates: Array[Vector2i] = []
 	for local_y in CHUNK_H:
 		for local_x in CHUNK_W:
@@ -200,7 +223,7 @@ func _spawn_chunk(chunk_coord: Vector2i) -> void:
 	for i in count:
 		world_tiles[candidates[i]].is_bomb = true
 
-	# Mark portals + pre-reveal + tint blue
+	# Portals: pre-revealed, blue tint via hint shader
 	for pw in portal_worlds:
 		portals_by_pos[pw] = true
 		var t: Tile = world_tiles[pw]
@@ -209,7 +232,12 @@ func _spawn_chunk(chunk_coord: Vector2i) -> void:
 		t.hint_color = PORTAL_COLOR
 		t.reveal()
 
-	# Recompute adjacencies in 3x3 chunks around this one (bombs might cross boundaries)
+	# Entry tile: always safe + revealed (may or may not be a portal)
+	var entry_tile: Tile = world_tiles[entry_world]
+	entry_tile.is_bomb = false
+	if entry_tile.state != Tile.State.REVEALED:
+		entry_tile.reveal()
+
 	_recompute_adjacencies_around(chunk_coord)
 
 	if status_label:
@@ -274,11 +302,58 @@ func _handle_left(tp: Vector2i) -> void:
 	var t: Tile = world_tiles[tp]
 	if t.state == Tile.State.FLAGGED or t.state == Tile.State.REVEALED:
 		return
+	if not first_click_done:
+		first_click_done = true
+		_ensure_safe_first_click(tp)
 	if t.is_bomb:
 		_lose(t)
 		return
 	_flood_reveal(tp)
 	_check_and_walk()
+
+func _ensure_safe_first_click(tp: Vector2i) -> void:
+	# Move any bombs at tp + 8 neighbors to safe destinations elsewhere.
+	var to_move: Array[Vector2i] = []
+	for dy in [-1, 0, 1]:
+		for dx in [-1, 0, 1]:
+			var np: Vector2i = tp + Vector2i(dx, dy)
+			if world_tiles.has(np) and world_tiles[np].is_bomb:
+				to_move.append(np)
+	if to_move.is_empty():
+		return
+
+	# Candidate destinations: non-bomb, not adjacent to tp, not a portal
+	var destinations: Array[Vector2i] = []
+	for wp in world_tiles.keys():
+		var wt: Tile = world_tiles[wp]
+		if wt.is_bomb:
+			continue
+		if portals_by_pos.has(wp):
+			continue
+		var d: Vector2i = wp - tp
+		if maxi(absi(d.x), absi(d.y)) <= 1:
+			continue
+		destinations.append(wp)
+	destinations.shuffle()
+
+	var moved := 0
+	for src in to_move:
+		if moved >= destinations.size():
+			break
+		world_tiles[src].is_bomb = false
+		world_tiles[destinations[moved]].is_bomb = true
+		moved += 1
+
+	# Recompute adjacencies for all tiles (bombs moved, counts may shift anywhere)
+	for wp in world_tiles.keys():
+		var wt: Tile = world_tiles[wp]
+		if wt.is_bomb:
+			continue
+		var new_count: int = _count_bombs_around(wp)
+		if new_count != wt.adjacent_bombs:
+			wt.adjacent_bombs = new_count
+			if wt.state == Tile.State.REVEALED:
+				wt._update_visual()
 
 func _flood_reveal(start: Vector2i) -> void:
 	var queue: Array[Vector2i] = [start]
@@ -343,9 +418,16 @@ func _on_knight_reached(tile_pos: Vector2i) -> void:
 		return
 	if not portals_by_pos.has(tile_pos):
 		return
-	_try_spawn_adjacent_chunk(tile_pos)
+	var new_chunk: Vector2i = _try_spawn_adjacent_chunk(tile_pos)
+	if new_chunk == NO_CHUNK:
+		return
+	# Auto-walk 1 tile into new chunk (to entry tile)
+	var entry: Vector2i = chunk_entry[new_chunk]
+	if entry != tile_pos:
+		var step_path: Array[Vector2i] = [knight.tile_pos, entry]
+		knight.walk_along_path(step_path)
 
-func _try_spawn_adjacent_chunk(portal_world_pos: Vector2i) -> void:
+func _try_spawn_adjacent_chunk(portal_world_pos: Vector2i) -> Vector2i:
 	var chunk_coord: Vector2i = _world_to_chunk(portal_world_pos)
 	var origin: Vector2i = chunk_coord * Vector2i(CHUNK_W, CHUNK_H)
 	var local: Vector2i = portal_world_pos - origin
@@ -359,10 +441,11 @@ func _try_spawn_adjacent_chunk(portal_world_pos: Vector2i) -> void:
 	elif local.x == CHUNK_W - 1:
 		adjacent = chunk_coord + Vector2i(1, 0)
 	else:
-		return
+		return NO_CHUNK
 	if chunks_spawned.has(adjacent):
-		return
-	_spawn_chunk(adjacent)
+		return NO_CHUNK
+	_spawn_chunk(adjacent, portal_world_pos)
+	return adjacent
 
 func _world_to_chunk(wp: Vector2i) -> Vector2i:
 	return Vector2i(floori(float(wp.x) / CHUNK_W), floori(float(wp.y) / CHUNK_H))
@@ -370,7 +453,6 @@ func _world_to_chunk(wp: Vector2i) -> Vector2i:
 func _lose(exploded_tile: Tile) -> void:
 	game_over = true
 	exploded_tile.show_as_exploded()
-	# Reveal all bombs across all spawned chunks
 	for wp in world_tiles.keys():
 		var t: Tile = world_tiles[wp]
 		if t == exploded_tile:
