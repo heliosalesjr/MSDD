@@ -27,7 +27,7 @@ var knight: CharacterBody2D
 var camera: Camera2D
 var current_chunk: Vector2i = Vector2i.ZERO
 var game_over: bool = false
-var first_click_done: bool = false
+var chunks_first_clicked: Dictionary = {}   # Vector2i (chunk coord) -> true
 
 var world_root: Node2D
 var background: ColorRect
@@ -312,8 +312,9 @@ func _handle_left(tp: Vector2i) -> void:
 	var t: Tile = world_tiles[tp]
 	if t.state == Tile.State.FLAGGED or t.state == Tile.State.REVEALED:
 		return
-	if not first_click_done:
-		first_click_done = true
+	var chunk_of_click: Vector2i = _world_to_chunk(tp)
+	if not chunks_first_clicked.has(chunk_of_click):
+		chunks_first_clicked[chunk_of_click] = true
 		_ensure_safe_first_click(tp)
 	if t.is_bomb:
 		_lose(t)
@@ -402,7 +403,9 @@ func _find_path_to_portal(start: Vector2i) -> Array[Vector2i]:
 			# Skip portals adjacent to start (avoids trivial 1-step walks
 			# to the entry portal of the just-entered chunk).
 			var dist: int = maxi(absi(p.x - start.x), absi(p.y - start.y))
-			if dist > 1:
+			# Skip portals whose adjacent chunk is already spawned — they lead
+			# back into explored territory, not forward.
+			if dist > 1 and _portal_leads_to_new_chunk(p):
 				found = p
 				break
 		for dir in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
@@ -440,24 +443,33 @@ func _on_knight_reached(tile_pos: Vector2i) -> void:
 	camera.position = _chunk_center_world(new_chunk)
 
 func _try_spawn_adjacent_chunk(portal_world_pos: Vector2i) -> Vector2i:
-	var chunk_coord: Vector2i = _world_to_chunk(portal_world_pos)
-	var origin: Vector2i = chunk_coord * Vector2i(CHUNK_W, CHUNK_H)
-	var local: Vector2i = portal_world_pos - origin
-	var adjacent: Vector2i
-	if local.y == 0:
-		adjacent = chunk_coord + Vector2i(0, -1)
-	elif local.y == CHUNK_H - 1:
-		adjacent = chunk_coord + Vector2i(0, 1)
-	elif local.x == 0:
-		adjacent = chunk_coord + Vector2i(-1, 0)
-	elif local.x == CHUNK_W - 1:
-		adjacent = chunk_coord + Vector2i(1, 0)
-	else:
+	var adjacent: Vector2i = _adjacent_chunk_of_portal(portal_world_pos)
+	if adjacent == NO_CHUNK:
 		return NO_CHUNK
 	if chunks_spawned.has(adjacent):
 		return NO_CHUNK
 	_spawn_chunk(adjacent, portal_world_pos)
 	return adjacent
+
+func _adjacent_chunk_of_portal(portal_world_pos: Vector2i) -> Vector2i:
+	var chunk_coord: Vector2i = _world_to_chunk(portal_world_pos)
+	var origin: Vector2i = chunk_coord * Vector2i(CHUNK_W, CHUNK_H)
+	var local: Vector2i = portal_world_pos - origin
+	if local.y == 0:
+		return chunk_coord + Vector2i(0, -1)
+	elif local.y == CHUNK_H - 1:
+		return chunk_coord + Vector2i(0, 1)
+	elif local.x == 0:
+		return chunk_coord + Vector2i(-1, 0)
+	elif local.x == CHUNK_W - 1:
+		return chunk_coord + Vector2i(1, 0)
+	return NO_CHUNK
+
+func _portal_leads_to_new_chunk(portal_world_pos: Vector2i) -> bool:
+	var adjacent: Vector2i = _adjacent_chunk_of_portal(portal_world_pos)
+	if adjacent == NO_CHUNK:
+		return false
+	return not chunks_spawned.has(adjacent)
 
 func _world_to_chunk(wp: Vector2i) -> Vector2i:
 	return Vector2i(floori(float(wp.x) / CHUNK_W), floori(float(wp.y) / CHUNK_H))
