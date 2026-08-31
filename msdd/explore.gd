@@ -24,6 +24,8 @@ var chunk_entry: Dictionary = {}         # Vector2i (chunk coord) -> Vector2i (w
 var portals_by_pos: Dictionary = {}      # Vector2i (world tile) -> true
 
 var knight: CharacterBody2D
+var camera: Camera2D
+var current_chunk: Vector2i = Vector2i.ZERO
 var game_over: bool = false
 var first_click_done: bool = false
 
@@ -138,6 +140,7 @@ func _build_end_overlay() -> void:
 func _spawn_knight() -> void:
 	knight = KnightScene.instantiate()
 	knight.scale = Vector2.ONE * KNIGHT_SCALE
+	knight.z_index = 10
 	world_root.add_child(knight)
 	knight.setup(CELL_PX)
 	var center := Vector2i(CHUNK_W / 2, CHUNK_H / 2)
@@ -148,11 +151,18 @@ func _spawn_knight() -> void:
 	if not t.is_bomb and t.state != Tile.State.REVEALED:
 		t.reveal()
 
-	var cam := Camera2D.new()
-	cam.position_smoothing_enabled = true
-	cam.position_smoothing_speed = 5.0
-	cam.make_current()
-	knight.add_child(cam)
+	# Camera is independent of the knight — it centers on the current chunk.
+	camera = Camera2D.new()
+	camera.position_smoothing_enabled = true
+	camera.position_smoothing_speed = 5.0
+	camera.position = _chunk_center_world(Vector2i.ZERO)
+	camera.make_current()
+	add_child(camera)
+
+func _chunk_center_world(chunk_coord: Vector2i) -> Vector2:
+	var origin: Vector2i = chunk_coord * Vector2i(CHUNK_W, CHUNK_H)
+	var center_tile: Vector2i = origin + Vector2i(CHUNK_W / 2, CHUNK_H / 2)
+	return Vector2(center_tile) * CELL_PX + Vector2.ONE * CELL_PX * 0.5
 
 func _spawn_chunk(chunk_coord: Vector2i, entry_from: Vector2i = NO_CHUNK) -> void:
 	if chunks_spawned.has(chunk_coord):
@@ -389,8 +399,12 @@ func _find_path_to_portal(start: Vector2i) -> Array[Vector2i]:
 	while not queue.is_empty():
 		var p: Vector2i = queue.pop_front()
 		if p != start and portals_by_pos.has(p):
-			found = p
-			break
+			# Skip portals adjacent to start (avoids trivial 1-step walks
+			# to the entry portal of the just-entered chunk).
+			var dist: int = maxi(absi(p.x - start.x), absi(p.y - start.y))
+			if dist > 1:
+				found = p
+				break
 		for dir in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
 			var np: Vector2i = p + dir
 			if visited.has(np):
@@ -421,11 +435,9 @@ func _on_knight_reached(tile_pos: Vector2i) -> void:
 	var new_chunk: Vector2i = _try_spawn_adjacent_chunk(tile_pos)
 	if new_chunk == NO_CHUNK:
 		return
-	# Auto-walk 1 tile into new chunk (to entry tile)
-	var entry: Vector2i = chunk_entry[new_chunk]
-	if entry != tile_pos:
-		var step_path: Array[Vector2i] = [knight.tile_pos, entry]
-		knight.walk_along_path(step_path)
+	# Camera slides to center of the new chunk; player stays put until a new portal is opened.
+	current_chunk = new_chunk
+	camera.position = _chunk_center_world(new_chunk)
 
 func _try_spawn_adjacent_chunk(portal_world_pos: Vector2i) -> Vector2i:
 	var chunk_coord: Vector2i = _world_to_chunk(portal_world_pos)
