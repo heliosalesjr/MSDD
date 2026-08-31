@@ -1,0 +1,66 @@
+[gd_scene format=3 uid="uid://d2atusxbb4jq"]
+
+[ext_resource type="Texture2D" uid="uid://de7822mvqa73r" path="res://assets/Little RPG Characters - Free Pack/Characters/Human Knight/Human_Knight.png" id="1_owtlo"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_64oui"]
+size = Vector2(16, 17)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_nsuie"]
+atlas = ExtResource("1_owtlo")
+region = Rect2(0, 0, 80, 80)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_26ldq"]
+atlas = ExtResource("1_owtlo")
+region = Rect2(80, 0, 80, 80)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_np0bx"]
+atlas = ExtResource("1_owtlo")
+region = Rect2(240, 0, 80, 80)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_go3up"]
+atlas = ExtResource("1_owtlo")
+region = Rect2(160, 0, 80, 80)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_gadha"]
+atlas = ExtResource("1_owtlo")
+region = Rect2(320, 0, 80, 80)
+
+[sub_resource type="AtlasTexture" id="AtlasTexture_o118k"]
+atlas = ExtResource("1_owtlo")
+region = Rect2(400, 0, 80, 80)
+
+[sub_resource type="SpriteFrames" id="SpriteFrames_f0pyo"]
+animations = [{
+"frames": [{
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_nsuie")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_26ldq")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_np0bx")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_go3up")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_gadha")
+}, {
+"duration": 1.0,
+"texture": SubResource("AtlasTexture_o118k")
+}],
+"loop": 1,
+"name": &"default",
+"speed": 5.0
+}]
+
+[node name="Knight" type="CharacterBody2D" unique_id=1771544738]
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="." unique_id=85269901]
+shape = SubResource("RectangleShape2D_64oui")
+
+[node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="." unique_id=908144552]
+sprite_frames = SubResource("SpriteFrames_f0pyo")
+autoplay = "default"
+frame_progress = 0.012875585
