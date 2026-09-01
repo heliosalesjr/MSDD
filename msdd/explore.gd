@@ -403,9 +403,12 @@ func _find_path_to_portal(start: Vector2i) -> Array[Vector2i]:
 			# Skip portals adjacent to start (avoids trivial 1-step walks
 			# to the entry portal of the just-entered chunk).
 			var dist: int = maxi(absi(p.x - start.x), absi(p.y - start.y))
-			# Skip portals whose adjacent chunk is already spawned — they lead
-			# back into explored territory, not forward.
-			if dist > 1 and _portal_leads_to_new_chunk(p):
+			# Only accept portals that belong to the current chunk (where the
+			# camera is). This prevents the player from walking to a still-open
+			# portal in a previously-explored chunk when both portals of the
+			# origin chunk were exposed at the same time.
+			var portal_chunk: Vector2i = _world_to_chunk(p)
+			if dist > 1 and _portal_leads_to_new_chunk(p) and portal_chunk == current_chunk:
 				found = p
 				break
 		for dir in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
