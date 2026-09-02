@@ -1,8 +1,9 @@
-# MSDD — Game Design Document (v0.2 / Foundational + Proto Snapshot)
+# MSDD — Game Design Document (v0.3 / Foundational + Dois Protótipos)
 
 > Rascunho inicial. Compila as decisões fundamentais tomadas em sessão de brainstorming.
 > Tudo aqui é revisável — o objetivo é servir de âncora conceitual, não de contrato.
-> **Atualização 2026-08-30:** adicionada §15 com o estado atual do protótipo técnico (Minesweeper + caça-chaves). Seções 1-14 permanecem como visão conceitual — o proto ainda não implementa a camada D&D.
+> **Atualização 2026-08-30:** §15 com o estado do primeiro protótipo (Minesweeper + caça-chaves).
+> **Atualização 2026-09-02:** §16 com o estado do segundo protótipo (Exploração — knight + chunks conectados). Seções 1-14 permanecem como visão conceitual.
 
 ---
 
@@ -203,8 +204,8 @@ Coisas que **ainda não decidimos** e que vão precisar de resposta antes ou dur
 
 **`menu.tscn` — menu inicial**
 - Título "MSDD" + subtítulo "Minesweeper × D&D".
-- Botão "1 — Jogar" (ativo, atalhos `1`/`Enter`).
-- Botão "2 — Em construção" (disabled).
+- Botão "1 — Jogar" (atalhos `1`/`Enter`) → carrega `main.tscn` (protótipo desta §15).
+- Botão "2 — Exploração (proto)" (atalho `2`) → carrega `explore.tscn` (protótipo da §16).
 
 **`main.tscn` — cena de jogo**
 - Grid **24×14 landscape** (336 células), tile art 16×16 renderizado a scale 2 → 32px onscreen.
@@ -281,7 +282,7 @@ O protótipo **não é** o MSDD descrito nos §§1-11. É um teste técnico. Pri
 ### 15.5 Próximos passos (post-proto)
 
 Sugestões pra próxima iteração, na ordem crítica:
-1. **Herói no grid** — Sprite2D visível (`Human_Knight` já tá nos assets), posição inicial no safe zone, movimento por clique em célula adjacente. Primeira ponte com §4 do GDD.
+1. ~~**Herói no grid**~~ *(feito no protótipo 2 — ver §16)*
 2. **Sistema mínimo de recursos** — HP e/ou turnos. Substituir o timer real-time por turnos consumidos por movimento. Alinha com §9 do GDD.
 3. **Ícones temáticos nas células** (§5.2) — trocar/complementar os números por número + ícone. Começar por 1-2 tipos além de bomba (ex: baú).
 4. **Múltiplos tipos de "coisa notável"** — generalizar o placement pra suportar N tipos com contagens/hint colors separadas.
@@ -289,3 +290,119 @@ Sugestões pra próxima iteração, na ordem crítica:
 6. **Chord click** — quando o board ficar denso o suficiente pra justificar.
 
 Racional da ordem: herói + turnos é a ponte conceitual mais importante (transforma o Minesweeper em RPG). Ícones e múltiplos tipos vêm depois, quando a mecânica base tá firme.
+
+---
+
+## 16. Estado do Protótipo 2 — Exploração (Set/2026)
+
+**Escopo.** Segundo protótipo, acessado pelo botão "2" do menu. Primeiro passo real em direção ao MSDD conceitual: agora o herói tem posição no grid (§4), se move célula-a-célula, e a "dungeon" começa a existir como espaço contínuo com múltiplas salas conectadas por portais.
+
+### 16.1 O que existe
+
+**`knight.tscn` + `knight.gd`**
+- Root `CharacterBody2D` com `AnimatedSprite2D` (5 anims: idle/walk/attack/death/powerUp — só idle/walk usados por enquanto) e `CollisionShape2D` (16×17 raw).
+- Script cuida de walk-along-path: recebe `Array[Vector2i]` de tiles, tween manual em `_physics_process` a `WALK_SPEED` = 120 px/s, toca "walk" durante movimento e "idle" ao parar, aplica `flip_h` pra viradas horizontais.
+- Emite signal `reached_target(tile_pos)` quando path termina.
+- Sprite raw 80×80, renderizado a `scale = 2` → ~72-100px onscreen (heroico sobre tile de 32px). `z_index = 10` pra sempre render acima dos tiles.
+
+**`explore.tscn` + `explore.gd` — cena de exploração**
+- Grid procedural em **chunks** de 24×14 tiles (mesmo tamanho do main.tscn).
+- Cada chunk sorteia orientação de portais no spawn: **VERTICAL** (portais N/S) ou **HORIZONTAL** (portais E/W). Só 2 portais por chunk.
+- Chunk inicial (0, 0): player no centro. Chunks subsequentes conectados via portais.
+- Chunks **persistem** — mundo contínuo cresce à medida que jogador avança. Todos os tiles ficam no `world_tiles: Dictionary` keyed por world position.
+- Bombas: 35 por chunk (~10% densidade).
+- Safe zones no spawn de cada chunk: portais + 8 vizinhas de cada, entry tile + 8 vizinhas, e (no chunk inicial) centro + 8 vizinhas.
+- **Portais** = tiles pre-revealed com tint azul via `tile_hint.gdshader` (`hint_color` = azul, `hint_rect` = tile inteira).
+
+**Movimento do player**
+- Sem input direto de movimento. Player se move via **auto-walk** quando BFS acha corredor a um portal válido.
+- BFS 4-conexo a partir da posição do knight, através de tiles revealed + non-bomb.
+- Rodada de BFS acontece: (1) após reveal de tile (click), (2) após flood-fill. **NÃO** após walk completion — evita chains de walks encadeados.
+- **Alvo válido de BFS** é um portal que atenda 3 condições combinadas:
+  - **Distância Chebyshev > 1 do start** (evita walk trivial de 1 passo pro entry portal quando orientações alinham).
+  - **Chunk adjacente ao portal ainda NÃO spawnado** (evita walk pra portais "mortos" que levam a território já explorado).
+  - **Pertence geograficamente ao `current_chunk`** (chunk onde a câmera está — evita walk pra portais em chunks antigos).
+
+**Câmera**
+- `Camera2D` independente do knight, filha da cena raiz.
+- Centrada no `current_chunk`. Ao chegar num portal e spawnar novo chunk, `current_chunk` muda e `camera.position` recebe o centro do novo chunk. `position_smoothing_speed = 5.0` lerpa suave.
+- Player fica onde estava (não teleporta) — visualmente parece que "veio de fora" do novo chunk, aparece na borda da tela na direção de origem.
+
+**Novo chunk ao chegar num portal**
+1. `_on_knight_reached(portal_pos)` → `_try_spawn_adjacent_chunk` cria chunk adjacente (se não existe).
+2. **Entry tile** do novo chunk é sempre safe + revealed. Posição = `portal_pos + direção_do_chunk` (ex: portal N de A em (12, 0) → entry em (12, -1) no chunk sul-de-A).
+3. Se orientações alinham (V→V ou H→H), entry tile É o portal oposto do novo chunk. Se cruzam (V→H ou H→V), entry é só um tile safe (não portal).
+4. `current_chunk` atualiza pro novo. Câmera lerpa pro centro dele.
+5. Player fica parado no portal antigo até novo BFS achar corredor pra portal válido do novo chunk.
+
+**First-click safety per chunk**
+- `chunks_first_clicked: Dictionary` rastreia quais chunks já tiveram primeiro clique.
+- Ao clicar pela primeira vez num chunk, se a tile clicada ou suas 8 vizinhas forem bombas, elas são movidas pra posições random (não-portal, fora do raio 1 do clique). Adjacências recomputadas globalmente.
+- Cliques subsequentes no mesmo chunk têm risco normal.
+
+**Adjacências cross-chunk**
+- Bombas num chunk afetam contagem de números nos tiles de borda dos chunks adjacentes.
+- `_recompute_adjacencies_around(chunk_coord)` roda em 3×3 chunks ao spawnar um novo. Se número de tile já revelado mudou, chama `_update_visual()` pra re-textura sem re-flood.
+
+**Fim de partida**
+- Único fim: clique em bomba → `_lose()`. Bombas revealed, wrong-flagged tiles marcadas.
+- Overlay end reutiliza padrão do main.gd: backdrop 55% + `PanelContainer` + "GAME OVER" + subtítulo "Boom! Chunks explorados: N" + botões "Voltar ao menu" / "Quit".
+- Sem vitória (modo aberto). Sem timer. Sem score.
+- `R` = `reload_current_scene()` (reset total).
+
+**UI**
+- Status label top-left: `"Chunks: N"` (contador de salas exploradas).
+
+### 16.2 O que foi validado tecnicamente
+
+- **CharacterBody2D + script** de walk-along-path funcional com tween manual em `_physics_process`, sem depender de `AnimationPlayer` ou `Tween` node.
+- **Chunks contínuos persistentes** em Godot 4 usando `Dictionary` global de tiles keyed por world position — sem gargalo notável até dezena de chunks explorados.
+- **`Camera2D` com `position_smoothing`** dá transição suave entre chunks sem código de tween adicional.
+- **Adjacência cross-chunk** limpa — flood-fill e contagem de números respeitam bordas entre chunks.
+- **BFS com filtros de contexto combinados** (`current_chunk`, `unspawned adjacent`, `dist > 1`) elimina walks indesejados (trivial, pra trás, pra chunks antigos).
+- **Signal-based reveal → BFS → walk** dá loop reativo sem polling.
+
+### 16.3 Bugs enfrentados durante o desenvolvimento
+
+Documentados aqui pra não repetir em iterações futuras:
+
+- **`Variant + Vector2i`:** parâmetro `entry_from: Variant = null` causou erro na hora de fazer `entry_from + direction`. Fix: usar `Vector2i` tipado com sentinela `NO_CHUNK = Vector2i(INT_MAX, INT_MAX)`.
+- **Typed Array em função:** passar `[a, b]` inline pra função que espera `Array[Vector2i]` falha em Godot 4 — literal cria Array untyped. Fix: declarar variável tipada primeiro (`var path: Array[Vector2i] = [a, b]`).
+- **Z-index:** knight renderizando abaixo de tiles porque novos chunks são adicionados ao scene tree DEPOIS do knight (later siblings render on top). Fix: `knight.z_index = 10` — children do knight herdam via `z_as_relative` default true.
+- **Player anda pra portal antigo:** BFS encontrava portais em chunks antigos ainda reachable via corredor revelado, player saía da câmera. Fix evoluído em 3 iterações: (1) `dist > 1`, (2) `leads to unspawned chunk`, (3) `portal in current_chunk`.
+- **First click ainda podia matar:** proteção original só cobria o primeiro clique do run inteiro. Ao entrar num chunk novo e clicar uma bomba, morte instantânea. Fix: rastrear per-chunk (`chunks_first_clicked`).
+
+### 16.4 Gaps notados durante o proto
+
+- **Sem "voltar" pra chunks anteriores:** exploração é one-way. Ao entrar num chunk novo via portal, o portal oposto não escolhido do chunk anterior fica inacessível pelo BFS (excluído pelo filtro `current_chunk`). Faltaria mecânica explícita de backtrack (tecla/botão pra recentralizar câmera em chunk antigo).
+- **Chord click ainda ausente.** Não é necessário sem timer, mas ao entrar mecânica de recursos limitados (turnos) vai fazer diferença.
+- **Player fica visualmente na borda da tela ao entrar em chunk novo.** Semanticamente correto ("veio de fora"), mas pode confundir — usuário pode pensar que "está fora do chunk". Sinalização visual explícita (seta, glow no entry tile) resolveria.
+- **Animation direcional limitada:** só walk-esquerda/direita via `flip_h`. Movimento vertical usa a mesma anim. Requer frames dedicados no sprite sheet ou aceitar limitação.
+- **Não tem vitória:** modo aberto pode virar meta-jogo "explore N chunks" ou "encontre o boss no chunk (X, Y)" quando decidirmos condição de fim.
+- **Sem HP, mana, combate — nada de RPG ainda.** Bomba = morte instantânea (mesmo que no proto 1).
+
+### 16.5 Comparação com GDD conceitual
+
+Atualização da tabela §15.2:
+
+| Aspecto | Conceito (§§1-11) | Proto 1 (§15) | Proto 2 (§16) |
+|---------|-------------------|----------------|-----------------|
+| Herói no grid | Avatar com posição, movimento | Cursor implícito | ✅ Knight visível, tile-a-tile |
+| Grid | Procedural irregular | 24×14 fixo | 24×14 por chunk, mundo contínuo |
+| Objetivo | Escada de saída | 5 chaves na mesma sala | Exploração aberta |
+| Coisas notáveis | Inimigo/baú/armadilha/santuário | Bombas + 5 chaves coloridas | Bombas + portais |
+| Tempo | Turnos discretos por ação | Timer 15s por chave | Sem timer |
+| Camera/mundo | Um espaço explorável | Fixo, uma tela | Contínuo, câmera transita |
+
+Proto 2 é o primeiro passo real em direção ao MSDD. Herói ✅. Movimento ✅. Mundo contínuo ✅. Falta: **turnos, HP, tipos de célula variados, sistema de dado, combate.**
+
+### 16.6 Próximos passos (post-proto-2)
+
+1. **Sistema de turnos** — cada tile andado consome 1 turno. Contador global regride. Zerar = morte. Substitui o "timer 15s" do proto 1 conceitualmente.
+2. **HP** — knight tem HP. Bomba causa dano em vez de morte instantânea (ou mantém morte + adiciona HP pra combates futuros).
+3. **Tipos de célula extras** — introduzir baú (revela → item/score), armadilha (revela → dano). Mesmo padrão técnico dos portais: tile pre-revealed com sprite/tint distinto, ou reveal-triggered com ícone.
+4. **Backtrack via UI** — tecla ou botão pra "voltar câmera pra chunk anterior" e permitir escolher o portal não escolhido.
+5. **Anim direcional** — dedicar frames de walk_up/walk_down se existirem no sprite sheet.
+6. **Unificar `main.tscn` e `explore.tscn`** — quando as duas mecânicas convergirem (turnos + herói + múltiplos tipos), fará sentido só uma cena "game.tscn" com toda a lógica. Proto 1 pode virar tutorial ou modo especial.
+
+Racional: turnos + HP são a base do RPG. Sem eles, o proto 2 é só "exploração livre" — que já validou tech mas não valida a experiência do MSDD.
