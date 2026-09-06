@@ -38,7 +38,7 @@ func _build_menu() -> void:
 	vbox.add_child(spacer)
 
 	var btn1 := Button.new()
-	btn1.text = "1 — Jogar"
+	btn1.text = "1 — Caça às chaves"
 	btn1.custom_minimum_size = Vector2(320, 60)
 	btn1.add_theme_font_size_override("font_size", 26)
 	btn1.pressed.connect(_on_play_pressed)
