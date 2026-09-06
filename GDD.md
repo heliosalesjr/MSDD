@@ -1,9 +1,10 @@
-# MSDD — Game Design Document (v0.3 / Foundational + Dois Protótipos)
+# MSDD — Game Design Document (v0.4 / Foundational + Três Protótipos)
 
 > Rascunho inicial. Compila as decisões fundamentais tomadas em sessão de brainstorming.
 > Tudo aqui é revisável — o objetivo é servir de âncora conceitual, não de contrato.
 > **Atualização 2026-08-30:** §15 com o estado do primeiro protótipo (Minesweeper + caça-chaves).
-> **Atualização 2026-09-02:** §16 com o estado do segundo protótipo (Exploração — knight + chunks conectados). Seções 1-14 permanecem como visão conceitual.
+> **Atualização 2026-09-02:** §16 com o estado do segundo protótipo (Exploração — knight + chunks conectados).
+> **Atualização 2026-09-06:** §17 com o estado do terceiro protótipo (Cripta — Minesweeper cozy com HP + 2d6). Seções 1-14 permanecem como visão conceitual.
 
 ---
 
@@ -204,8 +205,9 @@ Coisas que **ainda não decidimos** e que vão precisar de resposta antes ou dur
 
 **`menu.tscn` — menu inicial**
 - Título "MSDD" + subtítulo "Minesweeper × D&D".
-- Botão "1 — Jogar" (atalhos `1`/`Enter`) → carrega `main.tscn` (protótipo desta §15).
+- Botão "1 — Caça às chaves" (atalhos `1`/`Enter`) → carrega `main.tscn` (protótipo desta §15).
 - Botão "2 — Exploração (proto)" (atalho `2`) → carrega `explore.tscn` (protótipo da §16).
+- Botão "3 — Cripta" (atalho `3`) → carrega `classic.tscn` (protótipo da §17).
 
 **`main.tscn` — cena de jogo**
 - Grid **24×14 landscape** (336 células), tile art 16×16 renderizado a scale 2 → 32px onscreen.
@@ -406,3 +408,98 @@ Proto 2 é o primeiro passo real em direção ao MSDD. Herói ✅. Movimento ✅
 6. **Unificar `main.tscn` e `explore.tscn`** — quando as duas mecânicas convergirem (turnos + herói + múltiplos tipos), fará sentido só uma cena "game.tscn" com toda a lógica. Proto 1 pode virar tutorial ou modo especial.
 
 Racional: turnos + HP são a base do RPG. Sem eles, o proto 2 é só "exploração livre" — que já validou tech mas não valida a experiência do MSDD.
+
+---
+
+## 17. Estado do Protótipo 3 — Cripta (Set/2026)
+
+**Escopo.** Terceiro protótipo, acessado pelo botão "3" do menu. Um Minesweeper com sabor **cozy-D&D**: mesmas mecânicas base (grid, armadilhas, first-click-safe, flood-fill, flags), mas com uma camada RPG mínima em cima — HP + dado 2d6 + ouro — que remove o "instakill" clássico e transforma cada armadilha numa **decisão de risco negociada por dice roll**. Primeiro protótipo a exercitar o sistema de dado do §7 do GDD conceitual.
+
+### 17.1 O que existe
+
+**`classic.tscn` + `classic.gd` — "Cripta"**
+(nome de arquivo mantido do protótipo anterior de Minesweeper puro; semantics reescrita)
+
+- Grid 24×14 (mesmo do main.gd), 50 armadilhas (~15%), first-click safe.
+- Right-click cicla `HIDDEN → FLAGGED → QUESTIONED → HIDDEN`.
+- Flood-fill em zeros, cada tile seguro revelado dá **+1 ouro**.
+- **HP** inicial 5, sem regen.
+- **Ouro** acumulativo, sem gasto (métrica final).
+- **Dado 2d6 vs dificuldade fixa 7** ao clicar armadilha:
+  - **Sucesso (roll ≥ 7, ~58%):** armadilha desarmada. Tile vira safe (`is_bomb = false`), adjacências vizinhas recomputam, cascata pode disparar. +5 ouro bonus além do +1 do reveal.
+  - **Falha (roll < 7, ~42%):** armadilha dispara. Dano = margem de falha, capado 1-3. Tile fica revealed com `TEX_EXPLODED`, mas `is_bomb` permanece `true` (contadores dos vizinhos não mudam). Sem ouro.
+- **Fim de partida:**
+  - **Vitória:** todos os tiles não-armadilha revelados → "AVENTURA COMPLETA" + ouro final + HP restante.
+  - **Derrota:** HP zera → **"VOCÊ RECUA"** (deliberadamente cozy — evita "GAME OVER"). Armadilhas restantes reveladas visualmente. Ouro coletado exibido.
+- **Log narrativo** bottom-center em cor pergaminho (`Color(0.95, 0.88, 0.72)`):
+  - Início: "Você entra na cripta."
+  - Sucesso: "Você desarmou a armadilha (rolou N vs 7). +6 ouro."
+  - Falha: "A armadilha disparou (rolou N vs 7). -N HP."
+- **Status label** top-left: `HP: 5/5    Ouro: 0    Armadilhas: 50`.
+- Overlay end padrão do projeto (backdrop 55% + PanelContainer + menu/quit).
+- `R` reset.
+
+### 17.2 Design intents
+
+- **Cozy porque:** o dado tira o instakill. "GAME OVER" vira "VOCÊ RECUA" (softer, narrativo). Log em tom pergaminho warm. Ouro é sempre positivo — nunca perde. Sem timer, sem pressão temporal, sem screen shake.
+- **D&D porque:** dado 2d6 vs dificuldade — coração do sistema do §7 do GDD. HP como recurso finito. Vocabulário ("armadilha", "cripta", "expedição", "desarmar", "recuar") puxa fantasia.
+- **Simples porque:** apenas UMA mecânica nova casada em cima do minesweeper base (o dado no clique de armadilha). Todo o resto (números, flags, flood-fill, first-click-safe) permanece intacto.
+
+### 17.3 O que foi validado tecnicamente
+
+- **Loop 2d6 + damage margem + HP** funciona como base pro §7 do GDD. Números 6-8 sentem justos.
+- **Ouro como métrica gratificante contínua** dá loop de dopamina sem punição — cada clique seguro é celebrado.
+- **Log label com cor override warm** cria mood cozy sem custo (só um `Label` + `add_theme_color_override`).
+- **Reaproveitamento de mecânicas base** — 90% do código veio do `main.gd` sem chaves/timer/drama. Confirma que a arquitetura de tiles + shader é flexível pra variantes de gameplay.
+- **`_recompute_neighbors_of(pos)`** após desarme resolve limpo o problema de "adjacências ficam desatualizadas quando bombas mudam de status".
+
+### 17.4 Gaps notados
+
+- **Difficulty 7 pode ser generoso demais** — ~58% de sucesso deixa jogador esperto tanquear várias armadilhas com confiança. Pra mais tensão, testar 8 (~42%).
+- **Sem visual de dado rolando** — só texto no log. Ausência do "clatter" enfraquece o momento D&D. Animação de d6 na tela + som resolveria.
+- **Sem penalidade estratégica por errar** — só dano. Sem "shock" (1 turno sem clicar), sem modifier negativo na próxima rolagem, sem desabilitar flags temporariamente. Deixa a decisão rasa.
+- **Ouro não gasta** — puramente métrica final. Naturalmente pede loja entre runs ou score persistente entre sessões. Sem isso, incentivo pra maximizar é fraco.
+- **Sem regen de HP** — armadilhas erradas se acumulam sem recuperação. Pra runs mais longas (multi-dungeon), precisaria fonte de cura.
+- **Log some rapidamente** — cada nova ação sobrescreve. Player pode perder texto se clicar rápido. Fila/scroll de mensagens ou fade-out resolveria.
+
+### 17.5 Direções alternativas consideradas (possíveis próximos protótipos)
+
+Duas outras variações **cozy-D&D** foram propostas no brainstorm da §17 mas ficaram fora do protótipo atual. Ficam registradas como possíveis próximos testes:
+
+**A. "Cartógrafo pacato"** — pressão zero, foco puro em descoberta.
+- **Sem condição de derrota nenhuma.** Player é um cartógrafo mapeando ruínas antigas.
+- Cada célula revelada gera **flavor text curto** ("Você encontra poeira num canto", "Um brilho fraco atrás da parede", "Pegadas de goblin", "Um pergaminho gasto"). ~50 linhas fixas + sample aleatório resolvem MVP.
+- Armadilhas viram "quartos perigosos" que player marca com flag e evita — **não ferem**.
+- Números continuam indicando adjacência de coisas notáveis.
+- **Endgame** = mapa completo + journal narrativo pra ler no final.
+- **Cozy nível máximo.** Requer database de flavor text mas é o mais fácil de escrever depois de estruturado.
+
+**B. "Buscador de ervas"** — loop de coleta com recompensa visual.
+- **10-15% das células seguras contêm ervas / moedas / relíquias** com sprites distintos.
+- Score = valor total coletado (categorias diferentes de item = valores diferentes).
+- Armadilhas ainda matam (single run, sem HP/dado — ou opcionalmente com HP do proto 17).
+- **Dopamine loop:** cada clique tem chance de "pop" visual + som de coleta.
+- Puxa mecânica de coleta tipo Stardew mining / Animal Crossing.
+- **Requer arte adicional** (sprites de itens colecionáveis) mas fica visualmente satisfatório rápido.
+
+Cada variante testa um **vetor cozy diferente**:
+| Variante | Vetor testado | Complexidade | Requer |
+|----------|---------------|--------------|--------|
+| Cripta (§17 atual) | Dado + RPG stats | Média | Nada extra |
+| A. Cartógrafo pacato | Narrativa + descoberta | Baixa | Database de texto |
+| B. Buscador de ervas | Coleta + arte | Média | Sprites de itens |
+
+Rodar múltiplas variantes pode informar qual eixo escala melhor pro MSDD real (ou dar ideias pra combinar — ex: "cripta com flavor text").
+
+### 17.6 Próximos passos (pra Cripta ou variantes)
+
+Sugestões pra iterar sobre o §17 atual OU tentar as variantes 17.5:
+
+1. **Playtest de difficulty** — testar 6, 7, 8 no dado e ver qual sente melhor. Provavelmente 8 mais tenso.
+2. **Animação de dado** — sprites de d6 rolando + som ao clicar armadilha. Reforça o momento D&D.
+3. **Loja / gastar ouro** — dar propósito ao ouro. Poções de HP, "escudo" pro próximo dado, mapa parcial revelador, etc.
+4. **HP potions dropadas** — 1-2 células com "poção" que dá +1 HP ao revelar. Recurso descoberto no board.
+5. **Journal narrativo** (empréstimo da variante A) — cada evento importante entra num log persistente que player pode revisar.
+6. **Sprites de dado + coração no HUD** — trocar texto por ícones. Ganho estético grande.
+7. **Prototipar variante A ("Cartógrafo pacato")** — como cena separada, testar se "pressão zero" tem apelo mesmo sem competição/desafio.
+8. **Prototipar variante B ("Buscador de ervas")** — se conseguir sprites, o loop de coleta é o mais viral/redes-sociais das três.
