@@ -51,11 +51,21 @@ func _build_menu() -> void:
 	btn2.pressed.connect(_on_explore_pressed)
 	vbox.add_child(btn2)
 
+	var btn3 := Button.new()
+	btn3.text = "3 — Minesweeper clássico"
+	btn3.custom_minimum_size = Vector2(320, 60)
+	btn3.add_theme_font_size_override("font_size", 26)
+	btn3.pressed.connect(_on_classic_pressed)
+	vbox.add_child(btn3)
+
 func _on_play_pressed() -> void:
 	get_tree().change_scene_to_file("res://main.tscn")
 
 func _on_explore_pressed() -> void:
 	get_tree().change_scene_to_file("res://explore.tscn")
+
+func _on_classic_pressed() -> void:
+	get_tree().change_scene_to_file("res://classic.tscn")
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed:
@@ -63,3 +73,5 @@ func _unhandled_input(event: InputEvent) -> void:
 			_on_play_pressed()
 		elif event.keycode == KEY_2:
 			_on_explore_pressed()
+		elif event.keycode == KEY_3:
+			_on_classic_pressed()
