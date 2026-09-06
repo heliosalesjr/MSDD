@@ -5,19 +5,27 @@ const GRID_HEIGHT := 14
 const TILE_SIZE := 16
 const SCALE_FACTOR := 2
 const CELL_PX := TILE_SIZE * SCALE_FACTOR
-const BOMB_COUNT := 50
+const TRAP_COUNT := 50
+
+const MAX_HP := 5
+const TRAP_DIFFICULTY := 7
+const DAMAGE_MIN := 1
+const DAMAGE_MAX := 3
+const DISARM_BONUS := 5
 
 var tiles: Array = []
 var first_click_done: bool = false
 var game_over: bool = false
 var won: bool = false
-var non_bomb_revealed: int = 0
-var non_bomb_total: int = 0
+
+var hp: int = MAX_HP
+var gold: int = 0
 
 var base_position: Vector2 = Vector2.ZERO
 
 var ui_layer: CanvasLayer
 var status_label: Label
+var log_label: Label
 var end_overlay: Control
 var end_message_label: Label
 var end_subtitle_label: Label
@@ -53,10 +61,19 @@ func _setup_ui() -> void:
 
 	status_label = Label.new()
 	status_label.position = Vector2(20, 20)
-	status_label.add_theme_font_size_override("font_size", 24)
+	status_label.add_theme_font_size_override("font_size", 22)
 	status_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	status_label.text = "Bombas: %d" % BOMB_COUNT
 	ui_layer.add_child(status_label)
+
+	log_label = Label.new()
+	log_label.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	log_label.offset_top = -60
+	log_label.offset_bottom = -20
+	log_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	log_label.add_theme_font_size_override("font_size", 18)
+	log_label.add_theme_color_override("font_color", Color(0.95, 0.88, 0.72))
+	log_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ui_layer.add_child(log_label)
 
 	_build_end_overlay()
 
@@ -128,16 +145,21 @@ func _reset_run() -> void:
 	first_click_done = false
 	game_over = false
 	won = false
-	non_bomb_revealed = 0
-	non_bomb_total = GRID_WIDTH * GRID_HEIGHT - BOMB_COUNT
+	hp = MAX_HP
+	gold = 0
 	position = base_position
 	end_overlay.visible = false
 	for row in tiles:
 		for t in row:
 			t.reset()
-	print("Nova partida — %d bombas em %d células." % [BOMB_COUNT, GRID_WIDTH * GRID_HEIGHT])
+	log_label.text = "Você entra na cripta."
+	_update_status()
+	print("Nova expedição — %d armadilhas, HP %d." % [TRAP_COUNT, MAX_HP])
 
-func _place_bombs(safe_center: Vector2i) -> void:
+func _update_status() -> void:
+	status_label.text = "HP: %d/%d    Ouro: %d    Armadilhas: %d" % [hp, MAX_HP, gold, TRAP_COUNT]
+
+func _place_traps(safe_center: Vector2i) -> void:
 	var safe_zone := {}
 	for dy in range(-1, 2):
 		for dx in range(-1, 2):
@@ -151,7 +173,7 @@ func _place_bombs(safe_center: Vector2i) -> void:
 				candidates.append(p)
 
 	candidates.shuffle()
-	var count: int = mini(BOMB_COUNT, candidates.size())
+	var count: int = mini(TRAP_COUNT, candidates.size())
 	for i in count:
 		var p: Vector2i = candidates[i]
 		tiles[p.y][p.x].is_bomb = true
@@ -159,9 +181,9 @@ func _place_bombs(safe_center: Vector2i) -> void:
 	for y in GRID_HEIGHT:
 		for x in GRID_WIDTH:
 			if not tiles[y][x].is_bomb:
-				tiles[y][x].adjacent_bombs = _count_adjacent_bombs(x, y)
+				tiles[y][x].adjacent_bombs = _count_adjacent_traps(x, y)
 
-func _count_adjacent_bombs(cx: int, cy: int) -> int:
+func _count_adjacent_traps(cx: int, cy: int) -> int:
 	var n := 0
 	for dy in range(-1, 2):
 		for dx in range(-1, 2):
@@ -203,18 +225,63 @@ func _handle_left(x: int, y: int) -> void:
 		return
 
 	if not first_click_done:
-		_place_bombs(Vector2i(x, y))
+		_place_traps(Vector2i(x, y))
 		first_click_done = true
 
 	if t.is_bomb:
-		_lose(t)
+		_resolve_trap(t)
 		return
 
 	_flood_reveal(x, y)
+	_update_status()
 	_check_win()
 
 func _handle_right(x: int, y: int) -> void:
 	tiles[y][x].cycle_mark()
+
+func _resolve_trap(t: Tile) -> void:
+	var d1: int = randi_range(1, 6)
+	var d2: int = randi_range(1, 6)
+	var roll: int = d1 + d2
+
+	if roll >= TRAP_DIFFICULTY:
+		# Disarmed: clear trap, recompute adjacencies, flood-reveal, bonus gold.
+		var pos := t.grid_pos
+		t.is_bomb = false
+		t.adjacent_bombs = _count_adjacent_traps(pos.x, pos.y)
+		_recompute_neighbors_of(pos)
+		_flood_reveal(pos.x, pos.y)
+		gold += DISARM_BONUS
+		log_label.text = "Você desarmou a armadilha (rolou %d vs %d). +%d ouro." % [roll, TRAP_DIFFICULTY, DISARM_BONUS + 1]
+		_update_status()
+		_check_win()
+	else:
+		# Failed: trap fires, damage capped 1-3, tile shows exploded texture.
+		var damage: int = clampi(TRAP_DIFFICULTY - roll, DAMAGE_MIN, DAMAGE_MAX)
+		hp -= damage
+		t.show_as_exploded()
+		log_label.text = "A armadilha disparou (rolou %d vs %d). -%d HP." % [roll, TRAP_DIFFICULTY, damage]
+		_update_status()
+		if hp <= 0:
+			hp = 0
+			_update_status()
+			_retreat()
+
+func _recompute_neighbors_of(pos: Vector2i) -> void:
+	for dy in range(-1, 2):
+		for dx in range(-1, 2):
+			if dx == 0 and dy == 0:
+				continue
+			var nx: int = pos.x + dx
+			var ny: int = pos.y + dy
+			if nx < 0 or nx >= GRID_WIDTH or ny < 0 or ny >= GRID_HEIGHT:
+				continue
+			var nt: Tile = tiles[ny][nx]
+			if nt.is_bomb:
+				continue
+			nt.adjacent_bombs = _count_adjacent_traps(nx, ny)
+			if nt.state == Tile.State.REVEALED:
+				nt._update_visual()
 
 func _flood_reveal(sx: int, sy: int) -> void:
 	var queue: Array[Vector2i] = [Vector2i(sx, sy)]
@@ -226,7 +293,7 @@ func _flood_reveal(sx: int, sy: int) -> void:
 		if t.is_bomb:
 			continue
 		if t.reveal():
-			non_bomb_revealed += 1
+			gold += 1
 		if t.adjacent_bombs == 0:
 			for dy in range(-1, 2):
 				for dx in range(-1, 2):
@@ -239,28 +306,28 @@ func _flood_reveal(sx: int, sy: int) -> void:
 					queue.push_back(Vector2i(nx, ny))
 
 func _check_win() -> void:
-	if non_bomb_revealed >= non_bomb_total:
-		won = true
-		for row in tiles:
-			for t in row:
-				if t.is_bomb and t.state != Tile.State.FLAGGED:
-					t.flag()
-		_show_end("YOU WIN!", "Board limpo.")
-		print("Vitória!")
-
-func _lose(exploded_tile: Tile) -> void:
-	game_over = true
-	exploded_tile.show_as_exploded()
 	for row in tiles:
 		for t in row:
-			if t == exploded_tile:
-				continue
+			if not t.is_bomb and t.state != Tile.State.REVEALED:
+				return
+	won = true
+	for row in tiles:
+		for t in row:
 			if t.is_bomb and t.state != Tile.State.FLAGGED:
+				t.flag()
+	_show_end("AVENTURA COMPLETA", "Você mapeou toda a cripta.\nOuro: %d    HP restante: %d/%d" % [gold, hp, MAX_HP])
+	print("Aventura completa! Ouro: %d, HP: %d" % [gold, hp])
+
+func _retreat() -> void:
+	game_over = true
+	for row in tiles:
+		for t in row:
+			if t.is_bomb and t.state != Tile.State.FLAGGED and t.state != Tile.State.REVEALED:
 				t.show_as_bomb()
 			elif not t.is_bomb and t.state == Tile.State.FLAGGED:
 				t.show_as_wrong_flag()
-	_show_end("GAME OVER", "Boom!")
-	print("Boom!")
+	_show_end("VOCÊ RECUA", "HP esgotado. Ouro coletado: %d" % gold)
+	print("Recuada. Ouro: %d" % gold)
 
 func _show_end(main_text: String, subtitle_text: String) -> void:
 	end_message_label.text = main_text

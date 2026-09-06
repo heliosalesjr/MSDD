@@ -52,7 +52,7 @@ func _build_menu() -> void:
 	vbox.add_child(btn2)
 
 	var btn3 := Button.new()
-	btn3.text = "3 — Minesweeper clássico"
+	btn3.text = "3 — Cripta"
 	btn3.custom_minimum_size = Vector2(320, 60)
 	btn3.add_theme_font_size_override("font_size", 26)
 	btn3.pressed.connect(_on_classic_pressed)
