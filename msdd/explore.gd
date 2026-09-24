@@ -5,7 +5,7 @@ const CHUNK_H := 14
 const TILE_SIZE := 16
 const SCALE_FACTOR := 2
 const CELL_PX := TILE_SIZE * SCALE_FACTOR
-const CHUNK_BOMBS := 35
+const CHUNK_BOMBS := 45
 const KNIGHT_SCALE := 2
 
 const PORTAL_COLOR := Color(0.3, 0.7, 1.4)
