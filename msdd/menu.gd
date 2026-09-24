@@ -37,26 +37,45 @@ func _build_menu() -> void:
 	spacer.custom_minimum_size = Vector2(0, 40)
 	vbox.add_child(spacer)
 
-	var btn1 := Button.new()
-	btn1.text = "1 — Caça às chaves"
-	btn1.custom_minimum_size = Vector2(320, 60)
-	btn1.add_theme_font_size_override("font_size", 26)
-	btn1.pressed.connect(_on_play_pressed)
-	vbox.add_child(btn1)
+	_add_option(
+		vbox,
+		"1 — Caça às chaves",
+		"Ache 5 chaves escondidas no campo antes do tempo acabar.\nUm passo em falso numa bomba encerra a corrida.",
+		_on_play_pressed
+	)
 
-	var btn2 := Button.new()
-	btn2.text = "2 — Exploração (proto)"
-	btn2.custom_minimum_size = Vector2(320, 60)
-	btn2.add_theme_font_size_override("font_size", 26)
-	btn2.pressed.connect(_on_explore_pressed)
-	vbox.add_child(btn2)
+	_add_option(
+		vbox,
+		"2 — Exploração (proto)",
+		"Mova o cavaleiro por um mapa infinito de setores.\nCada portal abre um novo campo para revelar.",
+		_on_explore_pressed
+	)
 
-	var btn3 := Button.new()
-	btn3.text = "3 — Cripta"
-	btn3.custom_minimum_size = Vector2(320, 60)
-	btn3.add_theme_font_size_override("font_size", 26)
-	btn3.pressed.connect(_on_classic_pressed)
-	vbox.add_child(btn3)
+	_add_option(
+		vbox,
+		"3 — Cripta",
+		"Campo minado com regras de RPG: role os dados para desarmar armadilhas.\nJunte ouro e sobreviva com seus 5 pontos de vida.",
+		_on_classic_pressed
+	)
+
+func _add_option(parent: VBoxContainer, label: String, description: String, callback: Callable) -> void:
+	var option := VBoxContainer.new()
+	option.add_theme_constant_override("separation", 6)
+	parent.add_child(option)
+
+	var btn := Button.new()
+	btn.text = label
+	btn.custom_minimum_size = Vector2(320, 60)
+	btn.add_theme_font_size_override("font_size", 26)
+	btn.pressed.connect(callback)
+	option.add_child(btn)
+
+	var desc := Label.new()
+	desc.text = description
+	desc.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	desc.add_theme_font_size_override("font_size", 15)
+	desc.modulate = Color(0.65, 0.65, 0.7)
+	option.add_child(desc)
 
 func _on_play_pressed() -> void:
 	get_tree().change_scene_to_file("res://main.tscn")
