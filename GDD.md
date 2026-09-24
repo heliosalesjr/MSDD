@@ -5,6 +5,7 @@
 > **Atualização 2026-08-30:** §15 com o estado do primeiro protótipo (Minesweeper + caça-chaves).
 > **Atualização 2026-09-02:** §16 com o estado do segundo protótipo (Exploração — knight + chunks conectados).
 > **Atualização 2026-09-06:** §17 com o estado do terceiro protótipo (Cripta — Minesweeper cozy com HP + 2d6). Seções 1-14 permanecem como visão conceitual.
+> **Atualização 2026-09-24:** menu ganhou descrição curta por modo (§15.1); densidade de bombas da Exploração subiu de ~10% pra ~15% (§16.1).
 
 ---
 
@@ -208,6 +209,10 @@ Coisas que **ainda não decidimos** e que vão precisar de resposta antes ou dur
 - Botão "1 — Caça às chaves" (atalhos `1`/`Enter`) → carrega `main.tscn` (protótipo desta §15).
 - Botão "2 — Exploração (proto)" (atalho `2`) → carrega `explore.tscn` (protótipo da §16).
 - Botão "3 — Cripta" (atalho `3`) → carrega `classic.tscn` (protótipo da §17).
+- Cada botão traz **abaixo uma descrição de 2 linhas** (fonte 15, cinza) resumindo o modo — objetivo e condição de derrota. Botão + descrição são montados pelo helper `_add_option(parent, label, description, callback)`, que empacota os dois num `VBoxContainer` próprio.
+  - Caça às chaves: "Ache 5 chaves escondidas no campo antes do tempo acabar. / Um passo em falso numa bomba encerra a corrida."
+  - Exploração: "Mova o cavaleiro por um mapa infinito de setores. / Cada portal abre um novo campo para revelar."
+  - Cripta: "Campo minado com regras de RPG: role os dados para desarmar armadilhas. / Junte ouro e sobreviva com seus 5 pontos de vida."
 
 **`main.tscn` — cena de jogo**
 - Grid **24×14 landscape** (336 células), tile art 16×16 renderizado a scale 2 → 32px onscreen.
@@ -312,7 +317,7 @@ Racional da ordem: herói + turnos é a ponte conceitual mais importante (transf
 - Cada chunk sorteia orientação de portais no spawn: **VERTICAL** (portais N/S) ou **HORIZONTAL** (portais E/W). Só 2 portais por chunk.
 - Chunk inicial (0, 0): player no centro. Chunks subsequentes conectados via portais.
 - Chunks **persistem** — mundo contínuo cresce à medida que jogador avança. Todos os tiles ficam no `world_tiles: Dictionary` keyed por world position.
-- Bombas: 35 por chunk (~10% densidade).
+- Bombas: **45 por chunk** (~15% do chunk; ~14,6% dos tiles sorteáveis, já que as safe zones tiram ~27 candidatos). Era 35 (~10%) até 2026-09-24 — subiu pra alinhar a pressão com os outros dois modos (50 bombas em 336 células ≈ 15%).
 - Safe zones no spawn de cada chunk: portais + 8 vizinhas de cada, entry tile + 8 vizinhas, e (no chunk inicial) centro + 8 vizinhas.
 - **Portais** = tiles pre-revealed com tint azul via `tile_hint.gdshader` (`hint_color` = azul, `hint_rect` = tile inteira).
 
