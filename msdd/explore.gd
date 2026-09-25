@@ -160,8 +160,8 @@ func _spawn_knight() -> void:
 	camera.position_smoothing_enabled = true
 	camera.position_smoothing_speed = 5.0
 	camera.position = _chunk_center_world(Vector2i.ZERO)
-	camera.make_current()
 	add_child(camera)
+	camera.make_current()  # só funciona com a câmera já dentro da SceneTree
 
 func _chunk_center_world(chunk_coord: Vector2i) -> Vector2:
 	var origin: Vector2i = chunk_coord * Vector2i(CHUNK_W, CHUNK_H)
