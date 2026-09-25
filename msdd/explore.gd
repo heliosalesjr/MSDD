@@ -2,6 +2,10 @@ extends Node2D
 
 const CHUNK_W := 24
 const CHUNK_H := 14
+# Centro do chunk. `>> 1` = divisão por 2 em inteiro puro; `CHUNK_W / 2` dispara
+# o warning INTEGER_DIVISION do GDScript em toda linha onde aparece.
+const CHUNK_CX := CHUNK_W >> 1
+const CHUNK_CY := CHUNK_H >> 1
 const TILE_SIZE := 16
 const SCALE_FACTOR := 2
 const CELL_PX := TILE_SIZE * SCALE_FACTOR
@@ -143,7 +147,7 @@ func _spawn_knight() -> void:
 	knight.z_index = 10
 	world_root.add_child(knight)
 	knight.setup(CELL_PX)
-	var center := Vector2i(CHUNK_W / 2, CHUNK_H / 2)
+	var center := Vector2i(CHUNK_CX, CHUNK_CY)
 	knight.set_tile(center)
 	knight.reached_target.connect(_on_knight_reached)
 
@@ -161,7 +165,7 @@ func _spawn_knight() -> void:
 
 func _chunk_center_world(chunk_coord: Vector2i) -> Vector2:
 	var origin: Vector2i = chunk_coord * Vector2i(CHUNK_W, CHUNK_H)
-	var center_tile: Vector2i = origin + Vector2i(CHUNK_W / 2, CHUNK_H / 2)
+	var center_tile: Vector2i = origin + Vector2i(CHUNK_CX, CHUNK_CY)
 	return Vector2(center_tile) * CELL_PX + Vector2.ONE * CELL_PX * 0.5
 
 func _spawn_chunk(chunk_coord: Vector2i, entry_from: Vector2i = NO_CHUNK) -> void:
@@ -177,13 +181,13 @@ func _spawn_chunk(chunk_coord: Vector2i, entry_from: Vector2i = NO_CHUNK) -> voi
 	var portal_locals: Array[Vector2i] = []
 	if axis == AXIS_VERTICAL:
 		portal_locals = [
-			Vector2i(CHUNK_W / 2, 0),
-			Vector2i(CHUNK_W / 2, CHUNK_H - 1),
+			Vector2i(CHUNK_CX, 0),
+			Vector2i(CHUNK_CX, CHUNK_H - 1),
 		]
 	else:
 		portal_locals = [
-			Vector2i(0, CHUNK_H / 2),
-			Vector2i(CHUNK_W - 1, CHUNK_H / 2),
+			Vector2i(0, CHUNK_CY),
+			Vector2i(CHUNK_W - 1, CHUNK_CY),
 		]
 
 	var portal_worlds: Array[Vector2i] = []
@@ -193,7 +197,7 @@ func _spawn_chunk(chunk_coord: Vector2i, entry_from: Vector2i = NO_CHUNK) -> voi
 	# Entry tile — where player lands when arriving in this chunk
 	var entry_world: Vector2i
 	if entry_from == NO_CHUNK:
-		entry_world = origin + Vector2i(CHUNK_W / 2, CHUNK_H / 2)
+		entry_world = origin + Vector2i(CHUNK_CX, CHUNK_CY)
 	else:
 		var from_chunk_coord: Vector2i = _world_to_chunk(entry_from)
 		var direction: Vector2i = chunk_coord - from_chunk_coord
