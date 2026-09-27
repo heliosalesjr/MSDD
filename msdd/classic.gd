@@ -13,14 +13,7 @@ const DAMAGE_MIN := 1
 const DAMAGE_MAX := 3
 const DISARM_BONUS := 5
 
-# --- Cascata de abertura ---
-# Atraso adicionado por "anel" de distância a partir do tile clicado.
-# A onda se propaga pelo próprio caminho aberto, então ela respeita as
-# paredes de números em vez de ser um círculo geométrico.
-const CASCADE_STEP := 0.032
-# Bagunça o anel um pouquinho pra onda não parecer um metrônomo.
-# Mantido abaixo de CASCADE_STEP pra nunca inverter a ordem dos anéis.
-const CASCADE_JITTER := 0.012
+# O ritmo da cascata (passo por anel, jitter) vive em tile.gd.
 
 var tiles: Array = []
 var first_click_done: bool = false
@@ -315,9 +308,7 @@ func _flood_reveal(sx: int, sy: int) -> void:
 			continue
 		if t.is_bomb:
 			continue
-		var delay := 0.0
-		if ring > 0:
-			delay = ring * CASCADE_STEP + randf() * CASCADE_JITTER
+		var delay: float = Tile.cascade_delay(ring)
 		max_delay = maxf(max_delay, delay)
 		if t.reveal(delay):
 			gold += 1
@@ -334,8 +325,7 @@ func _flood_reveal(sx: int, sy: int) -> void:
 	_note_cascade(max_delay)
 
 func _note_cascade(max_delay: float) -> void:
-	var finish: int = Time.get_ticks_msec() + int((max_delay + Tile.OPEN_DURATION) * 1000.0)
-	cascade_end_msec = maxi(cascade_end_msec, finish)
+	cascade_end_msec = maxi(cascade_end_msec, Tile.cascade_finish_msec(max_delay))
 
 # Deixa a onda em curso assentar antes de cobrir a tela com o overlay.
 func _show_end_after_cascade(main_text: String, subtitle_text: String) -> void:

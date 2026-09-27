@@ -33,6 +33,10 @@ var current_chunk: Vector2i = Vector2i.ZERO
 var game_over: bool = false
 var chunks_first_clicked: Dictionary = {}   # Vector2i (chunk coord) -> true
 
+# Quando a última cascata agendada termina de abrir (ms do relógio do engine).
+# O ritmo da onda (passo por anel, jitter) vive em tile.gd.
+var cascade_end_msec: int = 0
+
 var world_root: Node2D
 var background: ColorRect
 
@@ -324,7 +328,7 @@ func _handle_left(tp: Vector2i) -> void:
 		_lose(t)
 		return
 	_flood_reveal(tp)
-	_check_and_walk()
+	_after_cascade(_check_and_walk)
 
 func _ensure_safe_first_click(tp: Vector2i) -> void:
 	# Move any bombs at tp + 8 neighbors to safe destinations elsewhere.
@@ -370,10 +374,17 @@ func _ensure_safe_first_click(tp: Vector2i) -> void:
 			if wt.state == Tile.State.REVEALED:
 				wt._update_visual()
 
+# O estado lógico (REVEALED) muda na hora; só a abertura visual é escalonada,
+# então o pathfinding e os cliques nunca ficam fora de sincronia com a onda.
 func _flood_reveal(start: Vector2i) -> void:
-	var queue: Array[Vector2i] = [start]
+	# Cada entrada é [posição, anel]. BFS garante que o primeiro visitante de
+	# um tile chega pelo caminho mais curto, ou seja, pelo menor anel.
+	var queue: Array = [[start, 0]]
+	var max_delay := 0.0
 	while not queue.is_empty():
-		var p: Vector2i = queue.pop_front()
+		var entry: Array = queue.pop_front()
+		var p: Vector2i = entry[0]
+		var ring: int = entry[1]
 		if not world_tiles.has(p):
 			continue
 		var t: Tile = world_tiles[p]
@@ -381,15 +392,32 @@ func _flood_reveal(start: Vector2i) -> void:
 			continue
 		if t.is_bomb:
 			continue
-		t.reveal()
+		var delay: float = Tile.cascade_delay(ring)
+		max_delay = maxf(max_delay, delay)
+		t.reveal(delay)
 		if t.adjacent_bombs == 0:
 			for dy in [-1, 0, 1]:
 				for dx in [-1, 0, 1]:
 					if dx == 0 and dy == 0:
 						continue
-					queue.push_back(p + Vector2i(dx, dy))
+					queue.push_back([p + Vector2i(dx, dy), ring + 1])
+	cascade_end_msec = maxi(cascade_end_msec, Tile.cascade_finish_msec(max_delay))
+
+# Agenda `action` para depois que a onda em curso assentar. Se um tile do
+# chunk vizinho ainda está abrindo, o cavaleiro não deve pisar nele nem o
+# overlay deve cobrir a animação.
+func _after_cascade(action: Callable) -> void:
+	var remaining: float = float(cascade_end_msec - Time.get_ticks_msec()) / 1000.0
+	if remaining <= 0.0:
+		action.call()
+		return
+	# Um clique novo durante a espera estende a onda, então ao acordar
+	# reconsultamos o prazo em vez de disparar cego.
+	get_tree().create_timer(remaining).timeout.connect(_after_cascade.bind(action))
 
 func _check_and_walk() -> void:
+	if game_over:
+		return
 	if knight == null or knight.walking:
 		return
 	var path: Array[Vector2i] = _find_path_to_portal(knight.tile_pos)
@@ -492,7 +520,7 @@ func _lose(exploded_tile: Tile) -> void:
 			t.show_as_bomb()
 		elif not t.is_bomb and t.state == Tile.State.FLAGGED:
 			t.show_as_wrong_flag()
-	_show_end("GAME OVER", "Boom! Chunks explorados: %d" % chunks_spawned.size())
+	_after_cascade(_show_end.bind("GAME OVER", "Boom! Chunks explorados: %d" % chunks_spawned.size()))
 	print("Boom! Chunks: %d" % chunks_spawned.size())
 
 func _show_end(main_text: String, subtitle_text: String) -> void:

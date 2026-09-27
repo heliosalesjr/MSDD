@@ -36,6 +36,24 @@ const OPEN_SCALE_PUNCH := 1.06
 # Clarão no instante da abertura.
 const OPEN_FLASH := Color(1.55, 1.45, 1.25)
 
+# --- Ritmo da cascata ---
+# Atraso adicionado por "anel" de distância a partir do tile clicado.
+const CASCADE_STEP := 0.032
+# Bagunça o anel um pouquinho pra onda não parecer um metrônomo.
+# Mantido abaixo de CASCADE_STEP pra nunca inverter a ordem dos anéis.
+const CASCADE_JITTER := 0.012
+
+# Quando o tile do anel `ring` deve começar a abrir.
+static func cascade_delay(ring: int) -> float:
+	if ring <= 0:
+		return 0.0
+	return ring * CASCADE_STEP + randf() * CASCADE_JITTER
+
+# Instante (ms do relógio do engine) em que uma cascata cujo maior atraso
+# é `max_delay` termina de abrir o último tile.
+static func cascade_finish_msec(max_delay: float) -> int:
+	return Time.get_ticks_msec() + int((max_delay + OPEN_DURATION) * 1000.0)
+
 var state: State = State.HIDDEN
 var grid_pos: Vector2i
 var is_bomb: bool = false
