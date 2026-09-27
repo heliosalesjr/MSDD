@@ -274,7 +274,7 @@ func _resolve_trap(t: Tile) -> void:
 		if hp <= 0:
 			hp = 0
 			_update_status()
-			_retreat()
+			_retreat(t.grid_pos)
 
 func _recompute_neighbors_of(pos: Vector2i) -> void:
 	for dy in range(-1, 2):
@@ -355,14 +355,25 @@ func _check_win() -> void:
 	_show_end_after_cascade("AVENTURA COMPLETA", "Você mapeou toda a cripta.\nOuro: %d    HP restante: %d/%d" % [gold, hp, MAX_HP])
 	print("Aventura completa! Ouro: %d, HP: %d" % [gold, hp])
 
-func _retreat() -> void:
+# A revelação final irradia da armadilha que derrubou o último HP, em anéis
+# de Chebyshev — aqui não há caminho aberto pra seguir, a onda é geométrica.
+func _retreat(epicenter: Vector2i) -> void:
 	game_over = true
+	var max_delay := 0.0
 	for row in tiles:
 		for t in row:
+			var ring: int = maxi(
+				absi(t.grid_pos.x - epicenter.x),
+				absi(t.grid_pos.y - epicenter.y)
+			)
+			var delay: float = Tile.defeat_delay(ring)
 			if t.is_bomb and t.state != Tile.State.FLAGGED and t.state != Tile.State.REVEALED:
-				t.show_as_bomb()
+				t.show_as_bomb(delay)
+				max_delay = maxf(max_delay, delay)
 			elif not t.is_bomb and t.state == Tile.State.FLAGGED:
-				t.show_as_wrong_flag()
+				t.show_as_wrong_flag(delay)
+				max_delay = maxf(max_delay, delay)
+	_note_cascade(max_delay)
 	_show_end_after_cascade("VOCÊ RECUA", "HP esgotado. Ouro coletado: %d" % gold)
 	print("Recuada. Ouro: %d" % gold)
 

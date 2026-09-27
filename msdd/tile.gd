@@ -54,6 +54,20 @@ static func cascade_delay(ring: int) -> float:
 static func cascade_finish_msec(max_delay: float) -> int:
 	return Time.get_ticks_msec() + int((max_delay + OPEN_DURATION) * 1000.0)
 
+# --- Ritmo da onda de derrota ---
+# Mais lenta que a cascata: aqui a onda é dramática, não funcional — ela
+# irradia do epicentro da explosão em vez de seguir o caminho aberto.
+const DEFEAT_STEP := 0.045
+# Teto pra não esperar uma eternidade num mundo grande (Exploração). As
+# bombas além do teto abrem juntas, mas estão fora da tela de qualquer jeito.
+const DEFEAT_MAX_DELAY := 1.1
+
+# Quando o tile a `ring` passos de Chebyshev do epicentro deve se revelar.
+static func defeat_delay(ring: int) -> float:
+	if ring <= 0:
+		return 0.0
+	return minf(ring * DEFEAT_STEP, DEFEAT_MAX_DELAY)
+
 var state: State = State.HIDDEN
 var grid_pos: Vector2i
 var is_bomb: bool = false
@@ -62,9 +76,16 @@ var has_key: bool = false
 var hint_rect: Rect2 = Rect2()
 var hint_color: Color = Color.WHITE
 
-# Verdadeiro entre o reveal() lógico e o instante em que a abertura visual
-# começa: o estado já é REVEALED, mas o sprite continua mostrando a tampa.
+# Verdadeiro entre a mudança lógica e o instante em que a abertura visual
+# começa: o estado já é REVEALED, mas o sprite continua mostrando o que
+# estava na tela antes (a tampa, ou a bandeira num reveal de derrota).
 var reveal_pending: bool = false
+
+# Textura imposta de fora (bomba, explodida, bandeira errada). Quando setada,
+# ela vence o que o estado diria — inclusive se _update_visual rodar de novo.
+var _forced_texture: Texture2D = null
+# O que mostrar enquanto a abertura está agendada mas ainda não começou.
+var _pending_prev_texture: Texture2D = null
 
 var _open_tween: Tween
 var _flash_tween: Tween
@@ -91,6 +112,7 @@ func reveal(delay: float = -1.0) -> bool:
 	if delay < 0.0:
 		_update_visual()
 	else:
+		_pending_prev_texture = texture
 		reveal_pending = true
 		_update_visual()
 		_play_open(delay)
@@ -114,26 +136,34 @@ func flag() -> void:
 	state = State.FLAGGED
 	_update_visual()
 
-func show_as_bomb() -> void:
-	_cancel_open()
-	state = State.REVEALED
-	modulate = Color.WHITE
-	texture = TEX_BOMB
+# delay < 0 troca na hora; delay >= 0 agenda o pop para daqui a `delay`
+# segundos, mantendo o sprite atual até lá.
+func show_as_bomb(delay: float = -1.0) -> void:
+	_show_forced(TEX_BOMB, delay)
 
-func show_as_exploded() -> void:
-	_cancel_open()
-	state = State.REVEALED
-	modulate = Color.WHITE
-	texture = TEX_EXPLODED
+func show_as_exploded(delay: float = -1.0) -> void:
+	_show_forced(TEX_EXPLODED, delay)
 
-func show_as_wrong_flag() -> void:
+func show_as_wrong_flag(delay: float = -1.0) -> void:
+	_show_forced(TEX_WRONG_FLAG, delay)
+
+func _show_forced(tex: Texture2D, delay: float) -> void:
 	_cancel_open()
 	state = State.REVEALED
-	modulate = Color.WHITE
-	texture = TEX_WRONG_FLAG
+	_forced_texture = tex
+	if delay < 0.0:
+		modulate = Color.WHITE
+		texture = tex
+		return
+	_pending_prev_texture = texture
+	reveal_pending = true
+	_update_visual()
+	_play_open(delay)
 
 func reset() -> void:
 	_cancel_open()
+	_forced_texture = null
+	_pending_prev_texture = null
 	state = State.HIDDEN
 	is_bomb = false
 	adjacent_bombs = 0
@@ -211,8 +241,11 @@ func _update_visual() -> void:
 	var effective_rect := Vector4.ZERO
 	var effective_tint := Vector4(1.0, 1.0, 1.0, 1.0)
 	if reveal_pending:
-		# Já revelado na lógica, mas a onda de abertura ainda não chegou aqui.
-		texture = TEX_HIDDEN
+		# Já revelado na lógica, mas a onda ainda não chegou aqui: segue
+		# mostrando o que estava na tela (tampa, interrogação ou bandeira).
+		texture = _pending_prev_texture if _pending_prev_texture != null else TEX_HIDDEN
+	elif _forced_texture != null:
+		texture = _forced_texture
 	else:
 		match state:
 			State.HIDDEN:

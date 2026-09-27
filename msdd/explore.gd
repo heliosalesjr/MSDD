@@ -509,17 +509,27 @@ func _portal_leads_to_new_chunk(portal_world_pos: Vector2i) -> bool:
 func _world_to_chunk(wp: Vector2i) -> Vector2i:
 	return Vector2i(floori(float(wp.x) / CHUNK_W), floori(float(wp.y) / CHUNK_H))
 
+# A revelação final irradia da bomba pisada, em anéis de Chebyshev — aqui não
+# há caminho aberto pra seguir, a onda é geométrica. Chunks distantes caem no
+# teto de Tile.defeat_delay e abrem juntos, fora da tela.
 func _lose(exploded_tile: Tile) -> void:
 	game_over = true
 	exploded_tile.show_as_exploded()
+	var epicenter: Vector2i = exploded_tile.grid_pos
+	var max_delay := 0.0
 	for wp in world_tiles.keys():
 		var t: Tile = world_tiles[wp]
 		if t == exploded_tile:
 			continue
+		var ring: int = maxi(absi(wp.x - epicenter.x), absi(wp.y - epicenter.y))
+		var delay: float = Tile.defeat_delay(ring)
 		if t.is_bomb and t.state != Tile.State.FLAGGED:
-			t.show_as_bomb()
+			t.show_as_bomb(delay)
+			max_delay = maxf(max_delay, delay)
 		elif not t.is_bomb and t.state == Tile.State.FLAGGED:
-			t.show_as_wrong_flag()
+			t.show_as_wrong_flag(delay)
+			max_delay = maxf(max_delay, delay)
+	cascade_end_msec = maxi(cascade_end_msec, Tile.cascade_finish_msec(max_delay))
 	_after_cascade(_show_end.bind("GAME OVER", "Boom! Chunks explorados: %d" % chunks_spawned.size()))
 	print("Boom! Chunks: %d" % chunks_spawned.size())
 
