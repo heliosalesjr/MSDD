@@ -13,6 +13,15 @@ const DAMAGE_MIN := 1
 const DAMAGE_MAX := 3
 const DISARM_BONUS := 5
 
+# --- Cascata de abertura ---
+# Atraso adicionado por "anel" de distância a partir do tile clicado.
+# A onda se propaga pelo próprio caminho aberto, então ela respeita as
+# paredes de números em vez de ser um círculo geométrico.
+const CASCADE_STEP := 0.032
+# Bagunça o anel um pouquinho pra onda não parecer um metrônomo.
+# Mantido abaixo de CASCADE_STEP pra nunca inverter a ordem dos anéis.
+const CASCADE_JITTER := 0.012
+
 var tiles: Array = []
 var first_click_done: bool = false
 var game_over: bool = false
@@ -20,6 +29,11 @@ var won: bool = false
 
 var hp: int = MAX_HP
 var gold: int = 0
+
+# Quando a última cascata agendada termina de abrir (ms do relógio do engine).
+var cascade_end_msec: int = 0
+# Incrementa a cada expedição, pra descartar timers de uma run já encerrada.
+var run_id: int = 0
 
 var base_position: Vector2 = Vector2.ZERO
 
@@ -142,6 +156,8 @@ func _build_end_overlay() -> void:
 	ui_layer.add_child(end_overlay)
 
 func _reset_run() -> void:
+	run_id += 1
+	cascade_end_msec = 0
 	first_click_done = false
 	game_over = false
 	won = false
@@ -283,16 +299,27 @@ func _recompute_neighbors_of(pos: Vector2i) -> void:
 			if nt.state == Tile.State.REVEALED:
 				nt._update_visual()
 
+# O estado lógico (ouro, REVEALED) muda na hora; só a abertura visual é
+# escalonada, pra que win check e cliques nunca fiquem fora de sincronia.
 func _flood_reveal(sx: int, sy: int) -> void:
-	var queue: Array[Vector2i] = [Vector2i(sx, sy)]
+	# Cada entrada é [posição, anel]. BFS garante que o primeiro visitante
+	# de um tile chega pelo caminho mais curto, ou seja, pelo menor anel.
+	var queue: Array = [[Vector2i(sx, sy), 0]]
+	var max_delay := 0.0
 	while not queue.is_empty():
-		var p: Vector2i = queue.pop_front()
+		var entry: Array = queue.pop_front()
+		var p: Vector2i = entry[0]
+		var ring: int = entry[1]
 		var t: Tile = tiles[p.y][p.x]
 		if t.state == Tile.State.REVEALED or t.state == Tile.State.FLAGGED:
 			continue
 		if t.is_bomb:
 			continue
-		if t.reveal():
+		var delay := 0.0
+		if ring > 0:
+			delay = ring * CASCADE_STEP + randf() * CASCADE_JITTER
+		max_delay = maxf(max_delay, delay)
+		if t.reveal(delay):
 			gold += 1
 		if t.adjacent_bombs == 0:
 			for dy in range(-1, 2):
@@ -303,7 +330,27 @@ func _flood_reveal(sx: int, sy: int) -> void:
 					var ny: int = p.y + dy
 					if nx < 0 or nx >= GRID_WIDTH or ny < 0 or ny >= GRID_HEIGHT:
 						continue
-					queue.push_back(Vector2i(nx, ny))
+					queue.push_back([Vector2i(nx, ny), ring + 1])
+	_note_cascade(max_delay)
+
+func _note_cascade(max_delay: float) -> void:
+	var finish: int = Time.get_ticks_msec() + int((max_delay + Tile.OPEN_DURATION) * 1000.0)
+	cascade_end_msec = maxi(cascade_end_msec, finish)
+
+# Deixa a onda em curso assentar antes de cobrir a tela com o overlay.
+func _show_end_after_cascade(main_text: String, subtitle_text: String) -> void:
+	var remaining: float = float(cascade_end_msec - Time.get_ticks_msec()) / 1000.0
+	if remaining <= 0.0:
+		_show_end(main_text, subtitle_text)
+		return
+	var timer := get_tree().create_timer(remaining)
+	timer.timeout.connect(_on_cascade_settled.bind(run_id, main_text, subtitle_text))
+
+func _on_cascade_settled(expected_run: int, main_text: String, subtitle_text: String) -> void:
+	# Um reset durante a espera invalida este fim de expedição.
+	if run_id != expected_run:
+		return
+	_show_end(main_text, subtitle_text)
 
 func _check_win() -> void:
 	for row in tiles:
@@ -315,7 +362,7 @@ func _check_win() -> void:
 		for t in row:
 			if t.is_bomb and t.state != Tile.State.FLAGGED:
 				t.flag()
-	_show_end("AVENTURA COMPLETA", "Você mapeou toda a cripta.\nOuro: %d    HP restante: %d/%d" % [gold, hp, MAX_HP])
+	_show_end_after_cascade("AVENTURA COMPLETA", "Você mapeou toda a cripta.\nOuro: %d    HP restante: %d/%d" % [gold, hp, MAX_HP])
 	print("Aventura completa! Ouro: %d, HP: %d" % [gold, hp])
 
 func _retreat() -> void:
@@ -326,7 +373,7 @@ func _retreat() -> void:
 				t.show_as_bomb()
 			elif not t.is_bomb and t.state == Tile.State.FLAGGED:
 				t.show_as_wrong_flag()
-	_show_end("VOCÊ RECUA", "HP esgotado. Ouro coletado: %d" % gold)
+	_show_end_after_cascade("VOCÊ RECUA", "HP esgotado. Ouro coletado: %d" % gold)
 	print("Recuada. Ouro: %d" % gold)
 
 func _show_end(main_text: String, subtitle_text: String) -> void:
