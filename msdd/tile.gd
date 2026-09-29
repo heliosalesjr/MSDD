@@ -86,6 +86,8 @@ var reveal_pending: bool = false
 var _forced_texture: Texture2D = null
 # O que mostrar enquanto a abertura está agendada mas ainda não começou.
 var _pending_prev_texture: Texture2D = null
+# Instante em que a abertura agendada começa (ms do relógio do engine).
+var _open_at_msec: int = 0
 
 var _open_tween: Tween
 var _flash_tween: Tween
@@ -173,8 +175,17 @@ func reset() -> void:
 	modulate = Color.WHITE
 	_update_visual()
 
+# Segundos até a abertura visual começar. 0 se o tile já abriu ou se não há
+# abertura agendada — quem precisa sincronizar algo com o tile (um sprite em
+# cima dele, por exemplo) consulta isto em vez de recalcular o atraso.
+func time_until_open() -> float:
+	if not reveal_pending:
+		return 0.0
+	return maxf(0.0, float(_open_at_msec - Time.get_ticks_msec()) / 1000.0)
+
 func _play_open(delay: float) -> void:
 	_capture_rest()
+	_open_at_msec = Time.get_ticks_msec() + int(delay * 1000.0)
 	if _open_tween != null and _open_tween.is_valid():
 		_open_tween.kill()
 	_set_open_progress(1.0)
@@ -231,6 +242,7 @@ func _cancel_open() -> void:
 		_flash_tween.kill()
 	_flash_tween = null
 	reveal_pending = false
+	_open_at_msec = 0
 	if _rest_captured:
 		scale = _rest_scale
 		position = _rest_position

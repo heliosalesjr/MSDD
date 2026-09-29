@@ -7,6 +7,7 @@
 > **Atualização 2026-09-06:** §17 com o estado do terceiro protótipo (Cripta — Minesweeper cozy com HP + 2d6). Seções 1-14 permanecem como visão conceitual.
 > **Atualização 2026-09-24:** menu ganhou descrição curta por modo (§15.1); densidade de bombas da Exploração subiu de ~10% pra ~15% (§16.1).
 > **Atualização 2026-09-27:** §18 com a cascata de revelação — primeira camada puramente estética do projeto, compartilhada pelos protótipos 2 e 3.
+> **Atualização 2026-09-29:** cascata estendida ao protótipo 1 (§18 agora vale para os três modos).
 
 ---
 
@@ -216,6 +217,7 @@ Coisas que **ainda não decidimos** e que vão precisar de resposta antes ou dur
   - Cripta: "Campo minado com regras de RPG: role os dados para desarmar armadilhas. / Junte ouro e sobreviva com seus 5 pontos de vida."
 
 **`main.tscn` — cena de jogo**
+- **Revelação em cascata** (desde 2026-09-29) — flood-fill e revelação de derrota abrem em onda. Ver **§18**, em especial §18.3 sobre os sprites de chave.
 - Grid **24×14 landscape** (336 células), tile art 16×16 renderizado a scale 2 → 32px onscreen.
 - **50 bombas** (~15% densidade).
 - **First click safe + zero** — bombas plantadas depois do primeiro clique, excluindo a célula clicada + 8 vizinhas → sempre abre uma área ≥ 3×3.
@@ -519,7 +521,7 @@ Sugestões pra iterar sobre o §17 atual OU tentar as variantes 17.5:
 
 ## 18. Cascata de revelação (Set/2026)
 
-**Escopo.** Primeira camada do projeto puramente **estética** — não muda regra, número ou condição de vitória nenhuma. Implementada nos protótipos **2 (Exploração)** e **3 (Cripta)**; o protótipo 1 segue com revelação instantânea de propósito, como controle de comparação.
+**Escopo.** Primeira camada do projeto puramente **estética** — não muda regra, número ou condição de vitória nenhuma. Implementada nos **três protótipos** (2 e 3 em 2026-09-27, o 1 em 2026-09-29). O ritmo vive todo em `tile.gd`, então os três compartilham a mesma linguagem visual.
 
 **A ideia:** ao clicar num tile, os tiles não abrem todos no mesmo frame. Eles abrem em **anéis**, com atraso crescente conforme a distância do clique — a cripta parece se abrir, em vez de simplesmente aparecer.
 
@@ -533,7 +535,7 @@ Isso foi deliberado. A alternativa — atrasar o estado lógico junto — dessin
 
 Efeito colateral que ficou melhor do que o planejado: a onda se propaga **pelo próprio caminho aberto**, então ela **contorna as paredes de números** em vez de ser um círculo geométrico. Lê como a cripta se abrindo, não como um efeito sobreposto ao grid.
 
-**Onda de derrota.** A revelação final das bombas irradia do **epicentro** — a armadilha que zerou o HP (§17) ou a bomba pisada (§16) — em anéis de **Chebyshev**, via `Tile.defeat_delay(ring)`. Aqui não há caminho aberto pra seguir, então a onda é geométrica mesmo. Ritmo próprio, mais lento que o do flood (a função aqui é dramática, não informativa), com teto de atraso pra não fazer o jogador esperar num mundo grande — no protótipo 2 as bombas de chunks distantes caem no teto e abrem juntas, mas estão fora da tela de qualquer forma.
+**Onda de derrota.** A revelação final das bombas irradia do **epicentro** em anéis de **Chebyshev**, via `Tile.defeat_delay(ring)`. O epicentro depende do modo: a armadilha que zerou o HP (§17), a bomba pisada (§15 e §16) ou — quando o tempo esgota no §15, que não tem bomba culpada — o **último tile clicado**, porque é onde a atenção do jogador estava. Aqui não há caminho aberto pra seguir, então a onda é geométrica mesmo. Ritmo próprio, mais lento que o do flood (a função aqui é dramática, não informativa), com teto de atraso pra não fazer o jogador esperar num mundo grande — no protótipo 2 as bombas de chunks distantes caem no teto e abrem juntas, mas estão fora da tela de qualquer forma.
 
 **Overlays esperam a onda.** "AVENTURA COMPLETA", "VOCÊ RECUA" e "GAME OVER" só aparecem depois que o último tile assenta. Sem isso, a tela de fim cobriria justamente a animação mais bonita do jogo.
 
@@ -550,7 +552,7 @@ Efeito colateral que ficou melhor do que o planejado: a onda se propaga **pelo p
 | `DEFEAT_STEP` | 0.045s | Atraso por anel na onda de derrota |
 | `DEFEAT_MAX_DELAY` | 1.1s | Teto de atraso da onda de derrota |
 
-O ritmo vive **todo em `tile.gd`**, não duplicado nas cenas — afinar num lugar afeta os dois protótipos. `CASCADE_JITTER` é mantido **abaixo** de `CASCADE_STEP` de propósito: acima, o jitter inverteria a ordem dos anéis e a onda perderia a direção.
+O ritmo vive **todo em `tile.gd`**, não duplicado nas cenas — afinar num lugar afeta os três protótipos. `CASCADE_JITTER` é mantido **abaixo** de `CASCADE_STEP` de propósito: acima, o jitter inverteria a ordem dos anéis e a onda perderia a direção.
 
 No grid 24×14, a maior cascata possível dá ~0.8s de ponta a ponta.
 
@@ -561,10 +563,12 @@ No grid 24×14, a maior cascata possível dá ~0.8s de ponta a ponta.
 - **Extensão da onda durante a espera** (protótipo 2). Um clique novo enquanto a onda corre **estende** o prazo, mas o timer já criado dispararia no prazo antigo — e o knight andaria em cima da onda nova. `_after_cascade` se **reagenda** ao acordar, reconsultando o prazo, em vez de disparar cego. No protótipo 3 isso não pode acontecer (depois do fim de partida os cliques já estão bloqueados).
 - **Reset no meio da onda.** Na Cripta, `R` durante a espera invalidaria o overlay agendado. Um `run_id` incrementado a cada expedição descarta timers de uma run já encerrada.
 - **Textura durante a pendência.** Um tile com bandeira errada mantém a **bandeira** até a onda chegar, não volta pra tampa. Por isso `_pending_prev_texture` guarda o que estava na tela em vez de assumir `TEX_HIDDEN`.
+- **Sprites de chave** (protótipo 1). O maior ajuste que a cascata exigiu no §15: a chave é um `AnimatedSprite2D` *em cima* do tile, então ela apareceria flutuando sobre uma tampa fechada. Agora o sprite espera o tile dela abrir, consultando `Tile.time_until_open()`. O **score e o reset do timer de 15s continuam imediatos** — a animação não pode cobrar tempo de um modo cronometrado. Na derrota, as chaves perdidas surgem conforme a onda passa por cada uma.
+- **Indicadores de chave via shader** (protótipo 1). Os tints de `tile_hint.gdshader` entram junto com o pop de cada tile, porque `_update_visual()` só roda quando a onda chega. O ganho foi inesperado: os 5 rastros coloridos se desenham progressivamente em vez de aparecerem todos num frame. Era o risco que tinha feito o §15 ficar de fora na primeira leva — na prática a cascata **melhorou** essa leitura.
+- **Timer real durante a onda** (protótipo 1). O relógio de 15s **não pausa** enquanto a cascata corre, e o tempo pode esgotar no meio de uma. Isso é proposital: a animação é enfeite, não estado de jogo. O `_timeout` no meio de uma cascata simplesmente estende o prazo da onda e o overlay espera as duas.
 
 ### 18.4 O que ficou de fora
 
-- **Protótipo 1 (`main.gd`)** — sem cascata, de propósito: serve de comparação direta do "antes e depois" e os 5 indicadores de chave do §15 têm sua própria linguagem visual.
 - **Spawn de chunk (§16)** — portais e entry tile de um chunk novo abrem instantâneos, porque a câmera está deslizando pra lá ao mesmo tempo. Um pop leve ali é um argumento em cada `reveal()`, se valer.
 - **Som** — a onda pede um tick por anel (ou por tile, com voice limit). Hoje o projeto não tem áudio nenhum; esse é o gap mais óbvio dessa camada.
-- **Screen shake na derrota** — combinaria com a onda irradiando, mas o §17.2 registra "sem screen shake" como decisão cozy deliberada. Fica como tensão de design a resolver, não como esquecimento.
+- **Screen shake na derrota** — combinaria com a onda irradiando, mas os modos discordam: o §15 **já tem** shake (escalando nos últimos 3s do timer, em `_update_dramatic_effects`), enquanto o §17.2 registra "sem screen shake" como decisão cozy deliberada. Ou seja, isso é decisão **por modo**, não global — e no §15 o shake para no instante da derrota, deixando a onda correr numa tela estável. Fica como tensão de design a resolver, não como esquecimento.

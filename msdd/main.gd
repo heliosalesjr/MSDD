@@ -42,6 +42,15 @@ var timer_running: bool = false
 
 var base_position: Vector2 = Vector2.ZERO
 
+# Quando a última cascata agendada termina de abrir (ms do relógio do engine).
+# O ritmo da onda (passo por anel, jitter) vive em tile.gd.
+var cascade_end_msec: int = 0
+# Incrementa a cada partida, pra descartar timers de uma run já encerrada.
+var run_id: int = 0
+# Epicentro da onda quando o tempo esgota: não há bomba pisada, então a
+# revelação irradia de onde a atenção do jogador estava.
+var last_click_pos: Vector2i = Vector2i(GRID_WIDTH >> 1, GRID_HEIGHT >> 1)
+
 var ui_layer: CanvasLayer
 var timer_label: Label
 var keys_label: Label
@@ -192,6 +201,8 @@ func _center_grid() -> void:
 	position = base_position
 
 func _reset_run() -> void:
+	run_id += 1
+	cascade_end_msec = 0
 	first_click_done = false
 	game_over = false
 	won_run = false
@@ -417,6 +428,8 @@ func _handle_left(x: int, y: int) -> void:
 	if t.state == Tile.State.FLAGGED or t.state == Tile.State.REVEALED:
 		return
 
+	last_click_pos = Vector2i(x, y)
+
 	if not first_click_done:
 		_place_bombs(Vector2i(x, y))
 		_place_keys(Vector2i(x, y))
@@ -433,16 +446,25 @@ func _handle_left(x: int, y: int) -> void:
 func _handle_right(x: int, y: int) -> void:
 	tiles[y][x].cycle_mark()
 
+# O estado lógico (REVEALED, score, timer) muda na hora; só a abertura visual
+# é escalonada, pra que a animação nunca custe tempo ao jogador.
 func _flood_reveal(sx: int, sy: int) -> void:
-	var queue: Array[Vector2i] = [Vector2i(sx, sy)]
+	# Cada entrada é [posição, anel]. BFS garante que o primeiro visitante de
+	# um tile chega pelo caminho mais curto, ou seja, pelo menor anel.
+	var queue: Array = [[Vector2i(sx, sy), 0]]
+	var max_delay := 0.0
 	while not queue.is_empty():
-		var p: Vector2i = queue.pop_front()
+		var entry: Array = queue.pop_front()
+		var p: Vector2i = entry[0]
+		var ring: int = entry[1]
 		var t: Tile = tiles[p.y][p.x]
 		if t.state == Tile.State.REVEALED or t.state == Tile.State.FLAGGED:
 			continue
 		if t.is_bomb:
 			continue
-		t.reveal()
+		var delay: float = Tile.cascade_delay(ring)
+		max_delay = maxf(max_delay, delay)
+		t.reveal(delay)
 		if t.adjacent_bombs == 0:
 			for dy in range(-1, 2):
 				for dx in range(-1, 2):
@@ -452,7 +474,26 @@ func _flood_reveal(sx: int, sy: int) -> void:
 					var ny: int = p.y + dy
 					if nx < 0 or nx >= GRID_WIDTH or ny < 0 or ny >= GRID_HEIGHT:
 						continue
-					queue.push_back(Vector2i(nx, ny))
+					queue.push_back([Vector2i(nx, ny), ring + 1])
+	_note_cascade(max_delay)
+
+func _note_cascade(max_delay: float) -> void:
+	cascade_end_msec = maxi(cascade_end_msec, Tile.cascade_finish_msec(max_delay))
+
+# Deixa a onda em curso assentar antes de cobrir a tela com o overlay.
+func _show_end_after_cascade(main_text: String, subtitle_text: String) -> void:
+	var remaining: float = float(cascade_end_msec - Time.get_ticks_msec()) / 1000.0
+	if remaining <= 0.0:
+		_show_end(main_text, subtitle_text)
+		return
+	var timer := get_tree().create_timer(remaining)
+	timer.timeout.connect(_on_cascade_settled.bind(run_id, main_text, subtitle_text))
+
+func _on_cascade_settled(expected_run: int, main_text: String, subtitle_text: String) -> void:
+	# Um reset durante a espera invalida este fim de partida.
+	if run_id != expected_run:
+		return
+	_show_end(main_text, subtitle_text)
 
 func _check_keys_found() -> void:
 	var any_found := false
@@ -465,7 +506,7 @@ func _check_keys_found() -> void:
 		keys_found_flags[i] = true
 		keys_found_count += 1
 		score += KEY_POINTS
-		key_sprites[i].visible = true
+		_show_key_when_tile_opens(i)
 		any_found = true
 		print("Chave %d/%d encontrada!" % [keys_found_count, KEYS_TO_WIN])
 
@@ -474,13 +515,32 @@ func _check_keys_found() -> void:
 		if keys_found_count >= KEYS_TO_WIN:
 			_win_run()
 
+# A chave aparece quando o tile dela abre, não quando a lógica a encontra —
+# senão o sprite flutuaria sobre uma tampa ainda fechada. O score e o reset
+# do timer continuam imediatos: a animação não cobra tempo do jogador.
+func _show_key_when_tile_opens(idx: int) -> void:
+	var pos: Vector2i = key_positions[idx]
+	var wait: float = tiles[pos.y][pos.x].time_until_open()
+	_show_key_sprite_after(idx, wait)
+
+func _show_key_sprite_after(idx: int, wait: float) -> void:
+	if wait <= 0.0:
+		key_sprites[idx].visible = true
+		return
+	get_tree().create_timer(wait).timeout.connect(_reveal_key_sprite.bind(idx, run_id))
+
+func _reveal_key_sprite(idx: int, expected_run: int) -> void:
+	if run_id != expected_run:
+		return
+	key_sprites[idx].visible = true
+
 func _timeout() -> void:
 	game_over = true
 	timer_running = false
 	position = base_position
 	danger_overlay.color.a = 0.0
-	_reveal_board_on_loss()
-	_show_end("GAME OVER", "Tempo esgotado. Score: %d" % score)
+	_reveal_board_on_loss(last_click_pos)
+	_show_end_after_cascade("GAME OVER", "Tempo esgotado. Score: %d" % score)
 	print("Tempo esgotado! Score final: %d" % score)
 
 func _lose(exploded_tile: Tile) -> void:
@@ -489,29 +549,46 @@ func _lose(exploded_tile: Tile) -> void:
 	position = base_position
 	danger_overlay.color.a = 0.0
 	exploded_tile.show_as_exploded()
-	_reveal_board_on_loss(exploded_tile)
-	_show_end("GAME OVER", "Boom! Score: %d" % score)
+	_reveal_board_on_loss(exploded_tile.grid_pos, exploded_tile)
+	_show_end_after_cascade("GAME OVER", "Boom! Score: %d" % score)
 	print("Boom! Score final: %d" % score)
 
-func _reveal_board_on_loss(exploded_tile: Tile = null) -> void:
+# A revelação final irradia do epicentro em anéis de Chebyshev — aqui não há
+# caminho aberto pra seguir, a onda é geométrica.
+func _reveal_board_on_loss(epicenter: Vector2i, exploded_tile: Tile = null) -> void:
+	var max_delay := 0.0
 	for row in tiles:
 		for t in row:
 			if t == exploded_tile:
 				continue
+			var ring: int = maxi(
+				absi(t.grid_pos.x - epicenter.x),
+				absi(t.grid_pos.y - epicenter.y)
+			)
+			var delay: float = Tile.defeat_delay(ring)
 			if t.is_bomb and t.state != Tile.State.FLAGGED:
-				t.show_as_bomb()
+				t.show_as_bomb(delay)
+				max_delay = maxf(max_delay, delay)
 			elif not t.is_bomb and t.state == Tile.State.FLAGGED:
-				t.show_as_wrong_flag()
+				t.show_as_wrong_flag(delay)
+				max_delay = maxf(max_delay, delay)
+	# As chaves perdidas surgem conforme a onda passa por elas.
 	for i in key_positions.size():
-		if not keys_found_flags[i]:
-			key_sprites[i].visible = true
+		if keys_found_flags[i]:
+			continue
+		var kp: Vector2i = key_positions[i]
+		var key_ring: int = maxi(absi(kp.x - epicenter.x), absi(kp.y - epicenter.y))
+		var key_delay: float = Tile.defeat_delay(key_ring)
+		max_delay = maxf(max_delay, key_delay)
+		_show_key_sprite_after(i, key_delay)
+	_note_cascade(max_delay)
 
 func _win_run() -> void:
 	won_run = true
 	timer_running = false
 	position = base_position
 	danger_overlay.color.a = 0.0
-	_show_end("YOU WIN!", "Score final: %d" % score)
+	_show_end_after_cascade("YOU WIN!", "Score final: %d" % score)
 	print("YOU WIN! Score final: %d" % score)
 
 func _show_end(main_text: String, subtitle_text: String) -> void:
