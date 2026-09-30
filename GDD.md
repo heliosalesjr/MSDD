@@ -276,7 +276,7 @@ O protótipo **não é** o MSDD descrito nos §§1-11. É um teste técnico. Pri
 ### 15.3 O que foi validado tecnicamente
 
 - Grid clickable + per-tile shader material funciona sem gargalo em Godot 4.7.
-- Flood-fill em 24×14 é instantâneo.
+- Flood-fill em 24×14 **custa nada** — o BFS resolve o grid inteiro em um frame. (É justamente isso que permitiu a cascata do §18 ser puramente visual: o cálculo continua instantâneo, só a *apresentação* é escalonada.)
 - Shader UV-region → hint colorido é **generalizável** pra múltiplos tipos de "coisa notável" (basta trocar `hint_color` por tile).
 - Modal end-game com PanelContainer + CenterContainer é padrão bom, aplicável a outras telas futuras (santuário, loot, level-up).
 - Transição de cena via `change_scene_to_file` é fluida.
@@ -537,7 +537,7 @@ Efeito colateral que ficou melhor do que o planejado: a onda se propaga **pelo p
 
 **Onda de derrota.** A revelação final das bombas irradia do **epicentro** em anéis de **Chebyshev**, via `Tile.defeat_delay(ring)`. O epicentro depende do modo: a armadilha que zerou o HP (§17), a bomba pisada (§15 e §16) ou — quando o tempo esgota no §15, que não tem bomba culpada — o **último tile clicado**, porque é onde a atenção do jogador estava. Aqui não há caminho aberto pra seguir, então a onda é geométrica mesmo. Ritmo próprio, mais lento que o do flood (a função aqui é dramática, não informativa), com teto de atraso pra não fazer o jogador esperar num mundo grande — no protótipo 2 as bombas de chunks distantes caem no teto e abrem juntas, mas estão fora da tela de qualquer forma.
 
-**Overlays esperam a onda.** "AVENTURA COMPLETA", "VOCÊ RECUA" e "GAME OVER" só aparecem depois que o último tile assenta. Sem isso, a tela de fim cobriria justamente a animação mais bonita do jogo.
+**Overlays esperam a onda.** "YOU WIN!", "AVENTURA COMPLETA", "VOCÊ RECUA" e "GAME OVER" — os quatro fins de partida dos três modos — só aparecem depois que o último tile assenta. Sem isso, a tela de fim cobriria justamente a animação mais bonita do jogo.
 
 ### 18.2 Números (todos em `tile.gd`)
 
@@ -560,8 +560,8 @@ No grid 24×14, a maior cascata possível dá ~0.8s de ponta a ponta.
 
 - **Pivô do pop.** `Sprite2D` não tem `pivot_offset`, e os tiles são `centered = false`. Escalar do canto faria o tile "fugir" pra baixo-direita. A escala compensa a posição na mão (`_set_open_progress`).
 - **Overshoot cortado pelos vizinhos.** Durante o pop o tile sobe de `z_index` — sem isso, o overshoot de 1.06 fica escondido atrás dos tiles irmãos desenhados depois.
-- **Extensão da onda durante a espera** (protótipo 2). Um clique novo enquanto a onda corre **estende** o prazo, mas o timer já criado dispararia no prazo antigo — e o knight andaria em cima da onda nova. `_after_cascade` se **reagenda** ao acordar, reconsultando o prazo, em vez de disparar cego. No protótipo 3 isso não pode acontecer (depois do fim de partida os cliques já estão bloqueados).
-- **Reset no meio da onda.** Na Cripta, `R` durante a espera invalidaria o overlay agendado. Um `run_id` incrementado a cada expedição descarta timers de uma run já encerrada.
+- **Extensão da onda durante a espera** (protótipo 2). Um clique novo enquanto a onda corre **estende** o prazo, mas o timer já criado dispararia no prazo antigo — e o knight andaria em cima da onda nova. `_after_cascade` se **reagenda** ao acordar, reconsultando o prazo, em vez de disparar cego. Nos protótipos 1 e 3 isso não pode acontecer — lá a espera só existe pra cobrir a tela de fim de partida, e a partir daí os cliques já estão bloqueados —, então eles usam um `_show_end_after_cascade` mais simples, de disparo único.
+- **Reset no meio da onda.** Nos protótipos 1 e 3, `R` reinicia a partida sem recriar a cena, então um timer pendente sobreviveria ao reset e dispararia num jogo novo — overlay fantasma no §17, e no §15 também um sprite de chave da partida anterior. Um `run_id` incrementado a cada run descarta esses timers. O protótipo 2 não precisa disso: lá o `R` chama `reload_current_scene()` e a cena inteira morre junto com os timers.
 - **Textura durante a pendência.** Um tile com bandeira errada mantém a **bandeira** até a onda chegar, não volta pra tampa. Por isso `_pending_prev_texture` guarda o que estava na tela em vez de assumir `TEX_HIDDEN`.
 - **Sprites de chave** (protótipo 1). O maior ajuste que a cascata exigiu no §15: a chave é um `AnimatedSprite2D` *em cima* do tile, então ela apareceria flutuando sobre uma tampa fechada. Agora o sprite espera o tile dela abrir, consultando `Tile.time_until_open()`. O **score e o reset do timer de 15s continuam imediatos** — a animação não pode cobrar tempo de um modo cronometrado. Na derrota, as chaves perdidas surgem conforme a onda passa por cada uma.
 - **Indicadores de chave via shader** (protótipo 1). Os tints de `tile_hint.gdshader` entram junto com o pop de cada tile, porque `_update_visual()` só roda quando a onda chega. O ganho foi inesperado: os 5 rastros coloridos se desenham progressivamente em vez de aparecerem todos num frame. Era o risco que tinha feito o §15 ficar de fora na primeira leva — na prática a cascata **melhorou** essa leitura.
