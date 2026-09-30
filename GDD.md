@@ -626,11 +626,98 @@ No grid 24×14, a maior cascata possível dá ~0.8s de ponta a ponta.
 
 A pergunta que ele responde: **forçar o jogador a cercar o objetivo cria tensão interessante ou só burocracia?** O risco é a segunda: cumprir quadrante pode virar "clicar quatro vezes em cantos aleatórios e seguir". O sinal de que funcionou é o jogador começar a **planejar a ordem** dos quadrantes — abrir primeiro o que parece mais seguro, guardar o pior pro fim, usar os números da fronteira pra escolher por onde encostar na zona seguinte.
 
-### 19.4 Gaps e riscos conhecidos
+### 19.4 Estado de validação
 
-- **Nunca rodou.** O Godot não está instalado na máquina desta sessão — nada aqui foi validado em execução. Os três itens abaixo são as suspeitas mais prováveis de precisar de ajuste no primeiro playtest.
-- **Performance com 2485 tiles.** Cada `Tile` cria o seu próprio `ShaderMaterial` no `_ready()`. São 2485 materiais e sprites; o `_reset_run` ainda percorre todos duas vezes (reset + tint). Se houver hitch no boot ou no `R`, o caminho é compartilhar um material entre os tiles que não usam `hint_rect` — que neste modo são todos.
-- **Densidade pode estar alta.** 15% veio dos outros modos, mas aqui o jogador é obrigado a se expor em 12 regiões. Se morrer demais mesmo com a proteção por região, baixar pra 10-12% é o primeiro ajuste.
-- **O gating pode ser burocrático.** Ver §19.3. Se o playtest mostrar que é só formalidade, a saída é dar **peso à escolha** — por exemplo, exigir *duas* casas por quadrante, ou fazer a densidade de bombas crescer em direção ao centro, de modo que cercar fique progressivamente mais perigoso.
-- **Sem recompensa intermediária.** Abrir uma zona só dá acesso à seguinte. Não há score, item nem flavor text — o §17.5 (variante "Cartógrafo pacato") tem a munição narrativa pronta pra isso, se valer.
-- **Placeholder de arte.** O Dodo é uma galinha. Não há sprite de dodo no projeto.
+**Nada aqui rodou.** O Godot não estava instalado na máquina da sessão em que este protótipo foi escrito — ele passou só por revisão de código e checagem de indentação/sintaxe. Toda a §19.5 é, portanto, hipótese fundamentada, não observação.
+
+Dois fatos (não hipóteses) sobre o estado atual:
+
+- **O Dodo é uma galinha.** Placeholder 16×16 do Farm RPG pack. Não existe sprite de dodo no projeto.
+- **Este é o maior grid do projeto por uma larga margem:** 2485 casas contra 336 dos protótipos 1 e 3. Vários números herdados dos outros modos foram escolhidos para grids 7× menores — é daí que vem a maior parte da §19.5.
+
+### 19.5 Painel de decisões — levar pro playtest
+
+Cada item abaixo é uma decisão em aberto, com o que está valendo hoje, o sinal que indica qual caminho tomar, e onde mexer. **Ordem de prioridade:** 1-3 provavelmente precisam de ajuste; 4-6 dependem do que o playtest mostrar; 7-8 são de produto, não de balanceamento.
+
+---
+
+**1. Ritmo da cascata neste grid — o mais provável de incomodar**
+
+- **Hoje:** `CASCADE_STEP = 0.032s` por anel, sem teto. Herdado dos grids 24×14.
+- **O problema:** num grid 71×35 o flood alcança anéis muito maiores. E o overlay de fim de partida **espera a cascata inteira** (§18), então uma vitória depois de um flood grande trava a tela por segundos.
+
+| Tamanho do flood | Duração da onda |
+|---|---|
+| grid 24×14, flood máximo (protótipos 1-3) | 0.90s |
+| Dodo, flood de 20 anéis | 0.80s |
+| Dodo, flood de 35 anéis (meia tela) | **1.28s** |
+| Dodo, flood de 60 anéis | **2.08s** |
+| Dodo, teórico máximo | **2.40s** |
+
+- **Sinal:** se abrir uma área grande der sensação de espera em vez de espetáculo, é isto.
+- **Opções:** (a) dar à cascata um teto como o da onda de derrota — existe `DEFEAT_MAX_DELAY`, falta o equivalente em `cascade_delay`; (b) `CASCADE_STEP` menor só neste modo, o que exige tirar o ritmo de `tile.gd` e parametrizá-lo por cena; (c) atraso proporcional à raiz do anel em vez de linear, comprimindo as pontas sem achatar o começo.
+- **Onde:** `tile.gd`, `CASCADE_STEP` e `cascade_delay()`. Cuidado: hoje esse ritmo é **compartilhado pelos quatro protótipos** (§18.2) — mexer direto ali afeta todos.
+
+---
+
+**2. Densidade de bombas**
+
+- **Hoje:** 15% (372 bombas), a mesma dos outros três modos.
+- **Por que pode estar errado:** nos outros modos o jogador escolhe onde cavar. Aqui o gating **obriga** exposição em 12 regiões distintas.
+- **Sinal:** morrer repetidamente antes da Mata, mesmo com a proteção por região.
+- **Opções:** baixar para 10-12%; ou densidade **crescente por zona** (Orla mansa, Clareira perigosa), que transforma a aproximação em tensão em vez de repetição.
+- **Onde:** `dodo.gd`, `BOMB_DENSITY`. A versão por zona exige mudar `_place_bombs` para sortear por `zone_members`.
+
+---
+
+**3. First-click safe por região — manter, afrouxar ou remover**
+
+- **Hoje:** cada uma das 12 regiões (3 zonas × 4 quadrantes) tem o seu primeiro clique protegido.
+- **Por que existe:** sem isso a chance de sobreviver aos doze cliques cegos obrigatórios é ~14% (§19.2). Mesmo remédio que o protótipo 2 usa por chunk (§16.3).
+- **A dúvida legítima:** 12 cliques garantidos podem tirar peso demais do risco — vira "clique de graça em cada canto".
+- **Opções:** manter; proteger só a primeira região de cada **zona** (3 em vez de 12); ou remover e compensar com densidade menor.
+- **Onde:** `dodo.gd`, `_ensure_safe_first_click()` e a chave `regions_first_clicked` (trocar `Vector2i(zona, quadrante)` por só a zona afrouxa para 3).
+
+---
+
+**4. O gating tem peso ou é burocracia? — a pergunta central do protótipo**
+
+- **Hoje:** uma casa revelada por quadrante libera a zona seguinte.
+- **Sinal de que funcionou:** você se pega **planejando a ordem** dos quadrantes — abrir primeiro o que parece seguro, guardar o pior pro fim, usar os números da fronteira pra escolher por onde encostar.
+- **Sinal de que falhou:** você clica quatro vezes em cantos aleatórios sem pensar e segue.
+- **Opções se falhar:** exigir **duas** casas por quadrante; exigir uma casa **por quadrante e por sub-anel**; ou casar com a densidade crescente do item 2, que faz cercar ficar progressivamente mais caro.
+- **Onde:** `dodo.gd`, `_mark_quadrant()` e `_check_zone_unlock()` — hoje `quadrants_done` é um array de bool; virar contador resolve a variante "duas casas".
+
+---
+
+**5. Performance com 2485 tiles**
+
+- **Hoje:** cada `Tile` cria o próprio `ShaderMaterial` no `_ready()`. São 2485 materiais e sprites; `_reset_run` percorre todos duas vezes (reset + tint).
+- **Sinal:** hitch no boot da cena ou ao apertar `R`.
+- **Opção:** compartilhar um único material entre os tiles que não usam `hint_rect` — que neste modo são **todos**, já que Save the Dodo não tem indicadores de chave nem tint de portal.
+- **Onde:** `tile.gd`, `_ready()`.
+
+---
+
+**6. Tamanho do grid**
+
+- **Hoje:** 71×35, tiles de 16px, ocupando 1136×560 de uma viewport 1280×720.
+- **A dúvida:** 16px é pequeno para ler números confortavelmente, e o grid ocupa quase toda a tela.
+- **Opções:** reduzir para ~55×27 com tiles de 20px (mais legível, zonas mais apertadas); ou manter o tamanho e adicionar zoom/câmera.
+- **Onde:** `dodo.gd`, `GRID_WIDTH` / `GRID_HEIGHT` / `SCALE_FACTOR`. **Mantenha as duas dimensões ímpares** — é o que garante um tile central exato pro Dodo.
+
+---
+
+**7. Arte do Dodo**
+
+- **Hoje:** galinha do Farm RPG pack, 4 frames de 16×16, escala 1.5.
+- **Por que 1.5 e não 2.0:** a 2× o sprite cobre os números das casas vizinhas, que é justamente onde você precisa enxergar pra fechar o cerco.
+- **A decidir:** encomendar ou buscar um sprite de dodo; e se o Dodo deve ter uma reação visual ao ser libertado (hoje só aparece o overlay).
+
+---
+
+**8. Por que o jogador se importa com o Dodo?**
+
+- **Hoje:** nada. Abrir uma zona só dá acesso à seguinte; não há score, item, nem flavor text.
+- **O ponto:** o modo se chama *Save the Dodo* mas não dá motivo emocional nenhum pra salvá-lo. Esse é o gap menos técnico e talvez o mais importante.
+- **Opções:** flavor text por zona (a variante "Cartógrafo pacato" do §17.5 tem a munição pronta); o Dodo reagindo conforme você se aproxima; contador de casas abertas como score.
