@@ -1,4 +1,4 @@
-# MSDD — Game Design Document (v0.4 / Foundational + Três Protótipos)
+# MSDD — Game Design Document (v0.5 / Foundational + Quatro Protótipos)
 
 > Rascunho inicial. Compila as decisões fundamentais tomadas em sessão de brainstorming.
 > Tudo aqui é revisável — o objetivo é servir de âncora conceitual, não de contrato.
@@ -8,6 +8,7 @@
 > **Atualização 2026-09-24:** menu ganhou descrição curta por modo (§15.1); densidade de bombas da Exploração subiu de ~10% pra ~15% (§16.1).
 > **Atualização 2026-09-27:** §18 com a cascata de revelação — primeira camada puramente estética do projeto, compartilhada pelos protótipos 2 e 3.
 > **Atualização 2026-09-29:** cascata estendida ao protótipo 1 (§18 agora vale para os três modos).
+> **Atualização 2026-09-30:** §19 com o quarto protótipo (Save the Dodo — grid grande com liberação por zona/quadrante).
 
 ---
 
@@ -211,10 +212,12 @@ Coisas que **ainda não decidimos** e que vão precisar de resposta antes ou dur
 - Botão "1 — Caça às chaves" (atalhos `1`/`Enter`) → carrega `main.tscn` (protótipo desta §15).
 - Botão "2 — Exploração (proto)" (atalho `2`) → carrega `explore.tscn` (protótipo da §16).
 - Botão "3 — Cripta" (atalho `3`) → carrega `classic.tscn` (protótipo da §17).
+- Botão "4 — Save the Dodo" (atalho `4`) → carrega `dodo.tscn` (protótipo da §19).
 - Cada botão traz **abaixo uma descrição de 2 linhas** (fonte 15, cinza) resumindo o modo — objetivo e condição de derrota. Botão + descrição são montados pelo helper `_add_option(parent, label, description, callback)`, que empacota os dois num `VBoxContainer` próprio.
   - Caça às chaves: "Ache 5 chaves escondidas no campo antes do tempo acabar. / Um passo em falso numa bomba encerra a corrida."
   - Exploração: "Mova o cavaleiro por um mapa infinito de setores. / Cada portal abre um novo campo para revelar."
   - Cripta: "Campo minado com regras de RPG: role os dados para desarmar armadilhas. / Junte ouro e sobreviva com seus 5 pontos de vida."
+  - Save the Dodo: "Abra caminho pelos quatro lados da ilha para chegar ao Dodo. / Cada anel só cede quando você o cerca por inteiro."
 
 **`main.tscn` — cena de jogo**
 - **Revelação em cascata** (desde 2026-09-29) — flood-fill e revelação de derrota abrem em onda. Ver **§18**, em especial §18.3 sobre os sprites de chave.
@@ -521,7 +524,7 @@ Sugestões pra iterar sobre o §17 atual OU tentar as variantes 17.5:
 
 ## 18. Cascata de revelação (Set/2026)
 
-**Escopo.** Primeira camada do projeto puramente **estética** — não muda regra, número ou condição de vitória nenhuma. Implementada nos **três protótipos** (2 e 3 em 2026-09-27, o 1 em 2026-09-29). O ritmo vive todo em `tile.gd`, então os três compartilham a mesma linguagem visual.
+**Escopo.** Primeira camada do projeto puramente **estética** — não muda regra, número ou condição de vitória nenhuma. Implementada nos **quatro protótipos** (2 e 3 em 2026-09-27, o 1 em 2026-09-29, e o 4 já nasceu com ela). O ritmo vive todo em `tile.gd`, então todos compartilham a mesma linguagem visual.
 
 **A ideia:** ao clicar num tile, os tiles não abrem todos no mesmo frame. Eles abrem em **anéis**, com atraso crescente conforme a distância do clique — a cripta parece se abrir, em vez de simplesmente aparecer.
 
@@ -535,9 +538,9 @@ Isso foi deliberado. A alternativa — atrasar o estado lógico junto — dessin
 
 Efeito colateral que ficou melhor do que o planejado: a onda se propaga **pelo próprio caminho aberto**, então ela **contorna as paredes de números** em vez de ser um círculo geométrico. Lê como a cripta se abrindo, não como um efeito sobreposto ao grid.
 
-**Onda de derrota.** A revelação final das bombas irradia do **epicentro** em anéis de **Chebyshev**, via `Tile.defeat_delay(ring)`. O epicentro depende do modo: a armadilha que zerou o HP (§17), a bomba pisada (§15 e §16) ou — quando o tempo esgota no §15, que não tem bomba culpada — o **último tile clicado**, porque é onde a atenção do jogador estava. Aqui não há caminho aberto pra seguir, então a onda é geométrica mesmo. Ritmo próprio, mais lento que o do flood (a função aqui é dramática, não informativa), com teto de atraso pra não fazer o jogador esperar num mundo grande — no protótipo 2 as bombas de chunks distantes caem no teto e abrem juntas, mas estão fora da tela de qualquer forma.
+**Onda de derrota.** A revelação final das bombas irradia do **epicentro** em anéis de **Chebyshev**, via `Tile.defeat_delay(ring)`. O epicentro depende do modo: a armadilha que zerou o HP (§17), a bomba pisada (§15, §16 e §19) ou — quando o tempo esgota no §15, que não tem bomba culpada — o **último tile clicado**, porque é onde a atenção do jogador estava. Aqui não há caminho aberto pra seguir, então a onda é geométrica mesmo. Ritmo próprio, mais lento que o do flood (a função aqui é dramática, não informativa), com teto de atraso pra não fazer o jogador esperar num mundo grande — no protótipo 2 as bombas de chunks distantes caem no teto e abrem juntas, mas estão fora da tela de qualquer forma.
 
-**Overlays esperam a onda.** "YOU WIN!", "AVENTURA COMPLETA", "VOCÊ RECUA" e "GAME OVER" — os quatro fins de partida dos três modos — só aparecem depois que o último tile assenta. Sem isso, a tela de fim cobriria justamente a animação mais bonita do jogo.
+**Overlays esperam a onda.** "YOU WIN!", "AVENTURA COMPLETA", "VOCÊ RECUA", "GAME OVER", "DODO LIVRE!" e "O DODO CONTINUA PRESO" — todos os fins de partida dos quatro modos — só aparecem depois que o último tile assenta. Sem isso, a tela de fim cobriria justamente a animação mais bonita do jogo.
 
 ### 18.2 Números (todos em `tile.gd`)
 
@@ -552,7 +555,7 @@ Efeito colateral que ficou melhor do que o planejado: a onda se propaga **pelo p
 | `DEFEAT_STEP` | 0.045s | Atraso por anel na onda de derrota |
 | `DEFEAT_MAX_DELAY` | 1.1s | Teto de atraso da onda de derrota |
 
-O ritmo vive **todo em `tile.gd`**, não duplicado nas cenas — afinar num lugar afeta os três protótipos. `CASCADE_JITTER` é mantido **abaixo** de `CASCADE_STEP` de propósito: acima, o jitter inverteria a ordem dos anéis e a onda perderia a direção.
+O ritmo vive **todo em `tile.gd`**, não duplicado nas cenas — afinar num lugar afeta os quatro protótipos. `CASCADE_JITTER` é mantido **abaixo** de `CASCADE_STEP` de propósito: acima, o jitter inverteria a ordem dos anéis e a onda perderia a direção.
 
 No grid 24×14, a maior cascata possível dá ~0.8s de ponta a ponta.
 
@@ -572,3 +575,62 @@ No grid 24×14, a maior cascata possível dá ~0.8s de ponta a ponta.
 - **Spawn de chunk (§16)** — portais e entry tile de um chunk novo abrem instantâneos, porque a câmera está deslizando pra lá ao mesmo tempo. Um pop leve ali é um argumento em cada `reveal()`, se valer.
 - **Som** — a onda pede um tick por anel (ou por tile, com voice limit). Hoje o projeto não tem áudio nenhum; esse é o gap mais óbvio dessa camada.
 - **Screen shake na derrota** — combinaria com a onda irradiando, mas os modos discordam: o §15 **já tem** shake (escalando nos últimos 3s do timer, em `_update_dramatic_effects`), enquanto o §17.2 registra "sem screen shake" como decisão cozy deliberada. Ou seja, isso é decisão **por modo**, não global — e no §15 o shake para no instante da derrota, deixando a onda correr numa tela estável. Fica como tensão de design a resolver, não como esquecimento.
+
+---
+
+## 19. Estado do Protótipo 4 — Save the Dodo (Set/2026)
+
+**Escopo.** Quarto protótipo, botão "4" do menu. Testa **um eixo de design que nenhum dos outros toca: progressão espacial obrigatória**. O jogador não escolhe onde cavar — precisa cercar o objetivo por inteiro antes de poder se aproximar dele. As mecânicas de minesweeper (bombas, números, flood-fill, flags) ficam intactas embaixo; o que é novo é o **gating por zona e quadrante** montado em cima.
+
+### 19.1 O que existe
+
+**`dodo.tscn` + `dodo.gd`**
+
+- Grid **71×35 = 2485 casas** (7× o dos outros protótipos), com tiles de **16px** onscreen — `SCALE_FACTOR = 1`, metade do tamanho dos demais modos, pra caber 1136×560px numa viewport de 1280×720.
+- **Dimensões ímpares de propósito:** garantem um tile central exato, que é onde o Dodo fica (35, 17).
+- **372 bombas** (~15%, mesma densidade dos outros modos).
+- O **Dodo** é um `AnimatedSprite2D` (4 frames de 16×16, placeholder de galinha do Farm RPG pack) sempre visível no centro, sobre um tile tingido de dourado. A casa dele nunca é clicável nem revelada pelo flood.
+- **3 zonas concêntricas**, de fora pra dentro: **Orla** (1404 casas), **Mata** (828), **Clareira** (253).
+- **Condição de vitória:** revelar qualquer casa **ortogonalmente adjacente** ao Dodo. O Dodo e as 8 casas em volta nunca recebem bomba — se um dos quatro lados fosse mina, a vitória seria inalcançável em segurança.
+- **Derrota:** clicar numa bomba. Revelação final irradia da bomba pisada (§18).
+- `R` reset, overlay de fim padrão do projeto, log narrativo em tom verde-folha.
+
+**O gating (a mecânica nova)**
+
+- Começa só com a **Orla** clicável. Casas de zona bloqueada são desenhadas **escuras** (`Tile.base_tint`), as clicáveis em cor cheia — é a leitura visual pedida: claro = disponível.
+- Pra abrir a zona seguinte, o jogador precisa ter revelado **ao menos uma casa em cada um dos 4 quadrantes** da zona atual. Quadrante é medido em relação ao Dodo (NO/NE/SO/SE), não à tela.
+- Ao abrir uma zona, o contador de quadrantes **zera** — a Mata exige os seus próprios quatro, e assim por diante.
+- A **Clareira não tem gating de saída**: é a última, então lá é só chegar ao Dodo.
+- O HUD mostra a zona atual e quais quadrantes já caíram.
+
+### 19.2 Decisões de implementação que não eram óbvias
+
+**Zonas em distância normalizada, não Chebyshev.** Anéis de Chebyshev puro num grid 71×35 ficariam quadrados: o anel externo sobraria só nas laterais, porque a distância vertical ao centro (17) se esgota muito antes da horizontal (35). A distância usada é `max(|dx|/35, |dy|/17)` — 0 no Dodo, 1 na borda — então os anéis acompanham a proporção do grid e a Orla é uma moldura de espessura visualmente constante.
+
+**O flood-fill não atravessa a fronteira da zona.** Sem isso o gating não existiria na prática: um flood grande na Orla vazaria pra dentro e entregaria a Clareira de graça. O BFS descarta qualquer casa de zona ainda bloqueada.
+
+**First-click safe por região, não por partida.** O gating **obriga** o jogador a abrir os quatro quadrantes, e o quadrante seguinte quase sempre fica longe de qualquer número já revelado — ou seja, ele é forçado a clicar às cegas. Com 15% de bombas e 12 regiões (3 zonas × 4 quadrantes), a chance de sobreviver a doze cliques cegos é ~14%. O modo seria injogável. Cada região ganha então o seu **próprio** primeiro clique protegido, movendo as bombas do entorno pra longe — exatamente o mesmo remédio que o protótipo 2 aplicou por chunk (§16.3). Dentro da região, os cliques seguintes têm risco normal.
+
+**Tingimento por `Tile.base_tint`.** Escurecer as zonas bloqueadas com `modulate` direto brigaria com a animação de abertura do §18, que também mexe em `modulate`. O `Tile` ganhou um `base_tint` que multiplica tudo que ele desenha, e o clarão do pop passou a ser `OPEN_FLASH * base_tint` em vez de branco absoluto — senão abrir um tile "acenderia" temporariamente uma casa que deveria estar apagada. Default branco, então os outros três protótipos não mudam.
+
+**A zona acende de fora pra dentro.** Ao ser liberada, a zona não troca de cor num frame: um tween de 0.55s varre o tint da borda externa dela pra dentro, na mesma linguagem da cascata do §18. O sweep itera só as casas daquela zona (pré-computadas em `zone_members`), não o grid inteiro.
+
+### 19.3 O que este protótipo testa que os outros não
+
+| | Eixo testado |
+|---|---|
+| §15 Caça às chaves | Pressão de tempo + busca por alvos dispersos |
+| §16 Exploração | Mundo contínuo + herói que anda |
+| §17 Cripta | Risco negociado por dado + HP |
+| **§19 Save the Dodo** | **Progressão espacial obrigatória — você não escolhe onde cavar** |
+
+A pergunta que ele responde: **forçar o jogador a cercar o objetivo cria tensão interessante ou só burocracia?** O risco é a segunda: cumprir quadrante pode virar "clicar quatro vezes em cantos aleatórios e seguir". O sinal de que funcionou é o jogador começar a **planejar a ordem** dos quadrantes — abrir primeiro o que parece mais seguro, guardar o pior pro fim, usar os números da fronteira pra escolher por onde encostar na zona seguinte.
+
+### 19.4 Gaps e riscos conhecidos
+
+- **Nunca rodou.** O Godot não está instalado na máquina desta sessão — nada aqui foi validado em execução. Os três itens abaixo são as suspeitas mais prováveis de precisar de ajuste no primeiro playtest.
+- **Performance com 2485 tiles.** Cada `Tile` cria o seu próprio `ShaderMaterial` no `_ready()`. São 2485 materiais e sprites; o `_reset_run` ainda percorre todos duas vezes (reset + tint). Se houver hitch no boot ou no `R`, o caminho é compartilhar um material entre os tiles que não usam `hint_rect` — que neste modo são todos.
+- **Densidade pode estar alta.** 15% veio dos outros modos, mas aqui o jogador é obrigado a se expor em 12 regiões. Se morrer demais mesmo com a proteção por região, baixar pra 10-12% é o primeiro ajuste.
+- **O gating pode ser burocrático.** Ver §19.3. Se o playtest mostrar que é só formalidade, a saída é dar **peso à escolha** — por exemplo, exigir *duas* casas por quadrante, ou fazer a densidade de bombas crescer em direção ao centro, de modo que cercar fique progressivamente mais perigoso.
+- **Sem recompensa intermediária.** Abrir uma zona só dá acesso à seguinte. Não há score, item nem flavor text — o §17.5 (variante "Cartógrafo pacato") tem a munição narrativa pronta pra isso, se valer.
+- **Placeholder de arte.** O Dodo é uma galinha. Não há sprite de dodo no projeto.

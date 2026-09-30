@@ -1,0 +1,592 @@
+extends Node2D
+
+# Grid bem maior que os outros protótipos, com tiles de 16px (metade do
+# tamanho onscreen dos demais) pra caber na tela. Dimensões ÍMPARES de
+# propósito: garantem um tile central exato, que é onde o Dodo fica.
+const GRID_WIDTH := 71
+const GRID_HEIGHT := 35
+const TILE_SIZE := 16
+const SCALE_FACTOR := 1
+const CELL_PX := TILE_SIZE * SCALE_FACTOR
+const BOMB_DENSITY := 0.15
+
+# 3 anéis concêntricos. A fronteira é medida em distância NORMALIZADA do
+# centro (0 no Dodo, 1 na borda), não em Chebyshev puro — assim os anéis
+# acompanham a proporção do grid em vez de virarem quadrados num grid
+# achatado, onde o anel externo sobraria só nas laterais.
+const ZONE_COUNT := 3
+const ZONE_INNER_EDGE := 1.0 / 3.0   # dentro disto = zona do Dodo
+const ZONE_OUTER_EDGE := 2.0 / 3.0   # fora disto = zona da borda
+
+const QUADRANT_COUNT := 4
+const QUADRANT_NAMES := ["NO", "NE", "SO", "SE"]
+
+const ZONE_NAMES := ["Orla", "Mata", "Clareira"]
+
+# Tiles clicáveis são claros; os de zona ainda bloqueada, escuros.
+const TINT_UNLOCKED := Color(1.0, 1.0, 1.0)
+const TINT_LOCKED := Color(0.42, 0.45, 0.58)
+const TINT_DODO := Color(1.35, 1.15, 0.55)
+
+# Quanto tempo a zona recém-liberada leva pra acender, de fora pra dentro.
+const ZONE_SWEEP_DURATION := 0.55
+
+const DODO_SHEET := preload("res://assets/Farm RPG FREE 16x16 - Tiny Asset Pack/Farm RPG FREE 16x16 - Tiny Asset Pack/Farm Animals/Chicken Blonde  Green.png")
+const DODO_FRAME_SIZE := 16
+const DODO_FRAME_COUNT := 4
+const DODO_FPS := 4.0
+# 1.5 e não 2.0: a 2x o sprite cobriria os números das casas vizinhas, que
+# é justamente onde o jogador precisa enxergar pra fechar o cerco.
+const DODO_SCALE := 1.5
+
+var tiles: Array = []            # [y][x] -> Tile
+var zone_of: Array = []          # [y][x] -> int 0..2 (0 = orla)
+var quadrant_of: Array = []      # [y][x] -> int 0..3
+var zone_local_of: Array = []    # [y][x] -> float 0 (borda externa da zona) .. 1 (interna)
+var zone_members: Array = []     # [zona] -> Array[Vector2i]
+
+var dodo_pos: Vector2i
+var dodo_sprite: AnimatedSprite2D
+
+var unlocked_zone: int = 0
+var quadrants_done: Array[bool] = [false, false, false, false]
+
+var first_click_done: bool = false
+# Vector2i(zona, quadrante) -> true. Cada uma das 12 regiões tem o seu
+# primeiro clique protegido, não só a primeira região da partida.
+var regions_first_clicked: Dictionary = {}
+var game_over: bool = false
+var won: bool = false
+
+var cascade_end_msec: int = 0
+var run_id: int = 0
+
+var base_position: Vector2 = Vector2.ZERO
+
+var ui_layer: CanvasLayer
+var status_label: Label
+var log_label: Label
+var end_overlay: Control
+var end_message_label: Label
+var end_subtitle_label: Label
+
+func _ready() -> void:
+	dodo_pos = Vector2i(GRID_WIDTH >> 1, GRID_HEIGHT >> 1)
+	_build_grid()
+	_classify_tiles()
+	_setup_dodo()
+	_setup_ui()
+	_center_grid()
+	get_viewport().size_changed.connect(_center_grid)
+	_reset_run()
+
+func _build_grid() -> void:
+	for y in GRID_HEIGHT:
+		var row: Array = []
+		for x in GRID_WIDTH:
+			var t := Tile.new()
+			t.grid_pos = Vector2i(x, y)
+			t.position = Vector2(x, y) * CELL_PX
+			t.scale = Vector2.ONE * SCALE_FACTOR
+			add_child(t)
+			row.append(t)
+		tiles.append(row)
+
+# Zona, quadrante e posição dentro da zona são fixos pro grid inteiro, então
+# calculamos uma vez só no boot em vez de a cada clique.
+func _classify_tiles() -> void:
+	var half_w := float(GRID_WIDTH >> 1)
+	var half_h := float(GRID_HEIGHT >> 1)
+	for _i in ZONE_COUNT:
+		zone_members.append([])
+	for y in GRID_HEIGHT:
+		var zrow: Array = []
+		var qrow: Array = []
+		var lrow: Array = []
+		for x in GRID_WIDTH:
+			var dx := float(x - dodo_pos.x)
+			var dy := float(y - dodo_pos.y)
+			# Distância normalizada: 0 no Dodo, 1 na borda mais próxima.
+			var dist: float = maxf(absf(dx) / half_w, absf(dy) / half_h)
+
+			var zone := 0
+			var outer := 1.0
+			var inner := ZONE_OUTER_EDGE
+			if dist <= ZONE_INNER_EDGE:
+				zone = 2
+				outer = ZONE_INNER_EDGE
+				inner = 0.0
+			elif dist <= ZONE_OUTER_EDGE:
+				zone = 1
+				outer = ZONE_OUTER_EDGE
+				inner = ZONE_INNER_EDGE
+
+			# 0 na borda externa da zona, 1 na interna — usado pra acender a
+			# zona de fora pra dentro quando ela é liberada.
+			var span: float = maxf(outer - inner, 0.0001)
+			lrow.append(clampf((outer - dist) / span, 0.0, 1.0))
+
+			# Quadrante relativo ao Dodo. O >= 0 nos dois eixos garante que a
+			# linha e a coluna centrais caiam num quadrante em vez de ficarem
+			# órfãs.
+			var q := 0
+			if dx >= 0.0:
+				q += 1
+			if dy >= 0.0:
+				q += 2
+
+			zrow.append(zone)
+			qrow.append(q)
+			zone_members[zone].append(Vector2i(x, y))
+		zone_of.append(zrow)
+		quadrant_of.append(qrow)
+		zone_local_of.append(lrow)
+
+func _setup_dodo() -> void:
+	var frames := SpriteFrames.new()
+	frames.set_animation_loop("default", true)
+	frames.set_animation_speed("default", DODO_FPS)
+	# Linha 0 da sheet (a de baixo é outra pose); 4 frames de 16x16.
+	for i in DODO_FRAME_COUNT:
+		var atlas := AtlasTexture.new()
+		atlas.atlas = DODO_SHEET
+		atlas.region = Rect2(i * DODO_FRAME_SIZE, 0, DODO_FRAME_SIZE, DODO_FRAME_SIZE)
+		frames.add_frame("default", atlas)
+
+	dodo_sprite = AnimatedSprite2D.new()
+	dodo_sprite.sprite_frames = frames
+	dodo_sprite.animation = "default"
+	dodo_sprite.scale = Vector2.ONE * DODO_SCALE
+	dodo_sprite.z_index = 20
+	dodo_sprite.position = Vector2(dodo_pos) * CELL_PX + Vector2.ONE * CELL_PX * 0.5
+	dodo_sprite.play()
+	add_child(dodo_sprite)
+
+func _center_grid() -> void:
+	var viewport_size := get_viewport_rect().size
+	var grid_px := Vector2(GRID_WIDTH, GRID_HEIGHT) * CELL_PX
+	base_position = ((viewport_size - grid_px) * 0.5).floor()
+	position = base_position
+
+func _setup_ui() -> void:
+	ui_layer = CanvasLayer.new()
+	add_child(ui_layer)
+
+	status_label = Label.new()
+	status_label.position = Vector2(20, 18)
+	status_label.add_theme_font_size_override("font_size", 20)
+	status_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ui_layer.add_child(status_label)
+
+	log_label = Label.new()
+	log_label.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	log_label.offset_top = -56
+	log_label.offset_bottom = -18
+	log_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	log_label.add_theme_font_size_override("font_size", 18)
+	log_label.add_theme_color_override("font_color", Color(0.88, 0.94, 0.80))
+	log_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ui_layer.add_child(log_label)
+
+	_build_end_overlay()
+
+func _build_end_overlay() -> void:
+	end_overlay = Control.new()
+	end_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	end_overlay.visible = false
+
+	var backdrop := ColorRect.new()
+	backdrop.color = Color(0, 0, 0, 0.55)
+	backdrop.set_anchors_preset(Control.PRESET_FULL_RECT)
+	backdrop.mouse_filter = Control.MOUSE_FILTER_STOP
+	end_overlay.add_child(backdrop)
+
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	end_overlay.add_child(center)
+
+	var panel := PanelContainer.new()
+	center.add_child(panel)
+
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 48)
+	margin.add_theme_constant_override("margin_right", 48)
+	margin.add_theme_constant_override("margin_top", 32)
+	margin.add_theme_constant_override("margin_bottom", 32)
+	panel.add_child(margin)
+
+	var vbox := VBoxContainer.new()
+	vbox.alignment = BoxContainer.ALIGNMENT_CENTER
+	vbox.add_theme_constant_override("separation", 20)
+	margin.add_child(vbox)
+
+	end_message_label = Label.new()
+	end_message_label.text = ""
+	end_message_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	end_message_label.add_theme_font_size_override("font_size", 56)
+	vbox.add_child(end_message_label)
+
+	end_subtitle_label = Label.new()
+	end_subtitle_label.text = ""
+	end_subtitle_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	end_subtitle_label.add_theme_font_size_override("font_size", 20)
+	end_subtitle_label.modulate = Color(0.85, 0.85, 0.85)
+	vbox.add_child(end_subtitle_label)
+
+	var button_row := HBoxContainer.new()
+	button_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	button_row.add_theme_constant_override("separation", 20)
+	vbox.add_child(button_row)
+
+	var menu_button := Button.new()
+	menu_button.text = "Voltar ao menu"
+	menu_button.custom_minimum_size = Vector2(180, 50)
+	menu_button.add_theme_font_size_override("font_size", 18)
+	menu_button.pressed.connect(_on_menu_pressed)
+	button_row.add_child(menu_button)
+
+	var quit_button := Button.new()
+	quit_button.text = "Quit"
+	quit_button.custom_minimum_size = Vector2(180, 50)
+	quit_button.add_theme_font_size_override("font_size", 18)
+	quit_button.pressed.connect(_on_quit_pressed)
+	button_row.add_child(quit_button)
+
+	ui_layer.add_child(end_overlay)
+
+func _reset_run() -> void:
+	run_id += 1
+	cascade_end_msec = 0
+	first_click_done = false
+	regions_first_clicked.clear()
+	game_over = false
+	won = false
+	unlocked_zone = 0
+	quadrants_done = [false, false, false, false]
+	position = base_position
+	end_overlay.visible = false
+	for row in tiles:
+		for t in row:
+			t.reset()
+	_apply_all_zone_tints()
+	log_label.text = "O Dodo está preso na clareira. Abra caminho pelos quatro lados."
+	_update_status()
+	print("Nova expedição — grid %dx%d, Dodo em %s." % [GRID_WIDTH, GRID_HEIGHT, dodo_pos])
+
+func _apply_all_zone_tints() -> void:
+	for y in GRID_HEIGHT:
+		for x in GRID_WIDTH:
+			var tint: Color = TINT_UNLOCKED if zone_of[y][x] <= unlocked_zone else TINT_LOCKED
+			tiles[y][x].set_base_tint(tint)
+	tiles[dodo_pos.y][dodo_pos.x].set_base_tint(TINT_DODO)
+
+func _update_status() -> void:
+	var marks := ""
+	for q in QUADRANT_COUNT:
+		var mark := "OK" if quadrants_done[q] else "--"
+		marks += "%s%s  " % [QUADRANT_NAMES[q], mark]
+	if unlocked_zone >= ZONE_COUNT - 1:
+		status_label.text = "Zona %d/%d — %s    O caminho até o Dodo está aberto" % [
+			unlocked_zone + 1, ZONE_COUNT, ZONE_NAMES[unlocked_zone]
+		]
+	else:
+		status_label.text = "Zona %d/%d — %s    Quadrantes: %s" % [
+			unlocked_zone + 1, ZONE_COUNT, ZONE_NAMES[unlocked_zone], marks.strip_edges()
+		]
+
+func _in_bounds(p: Vector2i) -> bool:
+	return p.x >= 0 and p.x < GRID_WIDTH and p.y >= 0 and p.y < GRID_HEIGHT
+
+func _place_bombs(safe_center: Vector2i) -> void:
+	var safe_zone := {}
+	for dy in range(-1, 2):
+		for dx in range(-1, 2):
+			safe_zone[safe_center + Vector2i(dx, dy)] = true
+	# O Dodo e as 8 casas em volta nunca são bomba: se um dos quatro lados
+	# dele fosse mina, a vitória seria impossível de alcançar em segurança.
+	for dy in range(-1, 2):
+		for dx in range(-1, 2):
+			safe_zone[dodo_pos + Vector2i(dx, dy)] = true
+
+	var candidates: Array[Vector2i] = []
+	for y in GRID_HEIGHT:
+		for x in GRID_WIDTH:
+			var p := Vector2i(x, y)
+			if not safe_zone.has(p):
+				candidates.append(p)
+
+	candidates.shuffle()
+	var wanted: int = int(GRID_WIDTH * GRID_HEIGHT * BOMB_DENSITY)
+	var count: int = mini(wanted, candidates.size())
+	for i in count:
+		var p: Vector2i = candidates[i]
+		tiles[p.y][p.x].is_bomb = true
+
+	for y in GRID_HEIGHT:
+		for x in GRID_WIDTH:
+			if not tiles[y][x].is_bomb:
+				tiles[y][x].adjacent_bombs = _count_adjacent_bombs(x, y)
+	print("Bombas plantadas: %d de %d casas." % [count, GRID_WIDTH * GRID_HEIGHT])
+
+# O gating obriga o jogador a abrir cada um dos quatro quadrantes de uma
+# zona, e o quadrante seguinte costuma ficar longe de qualquer número já
+# revelado — ou seja, ele é forçado a clicar às cegas. Com ~15% de bombas
+# isso daria ~14% de chance de sobreviver às 12 regiões. Então cada região
+# ganha o seu próprio primeiro clique protegido, como o protótipo 2 faz por
+# chunk (GDD §16.3). Dentro da região, os cliques seguintes têm risco normal.
+func _ensure_safe_first_click(p: Vector2i) -> void:
+	var region := Vector2i(zone_of[p.y][p.x], quadrant_of[p.y][p.x])
+	if regions_first_clicked.has(region):
+		return
+	regions_first_clicked[region] = true
+
+	var to_move: Array[Vector2i] = []
+	for dy in range(-1, 2):
+		for dx in range(-1, 2):
+			var np := Vector2i(p.x + dx, p.y + dy)
+			if _in_bounds(np) and tiles[np.y][np.x].is_bomb:
+				to_move.append(np)
+	if to_move.is_empty():
+		return
+
+	# Destinos: casas livres longe do clique e fora do entorno do Dodo.
+	var destinations: Array[Vector2i] = []
+	for y in GRID_HEIGHT:
+		for x in GRID_WIDTH:
+			var np := Vector2i(x, y)
+			if tiles[y][x].is_bomb:
+				continue
+			if tiles[y][x].state == Tile.State.REVEALED:
+				continue
+			if maxi(absi(np.x - p.x), absi(np.y - p.y)) <= 1:
+				continue
+			if maxi(absi(np.x - dodo_pos.x), absi(np.y - dodo_pos.y)) <= 1:
+				continue
+			destinations.append(np)
+	destinations.shuffle()
+
+	var moved := 0
+	for src in to_move:
+		if moved >= destinations.size():
+			break
+		tiles[src.y][src.x].is_bomb = false
+		var dst: Vector2i = destinations[moved]
+		tiles[dst.y][dst.x].is_bomb = true
+		moved += 1
+
+	# Bombas mudaram de lugar: os números podem ter mudado em qualquer canto.
+	for y in GRID_HEIGHT:
+		for x in GRID_WIDTH:
+			var t: Tile = tiles[y][x]
+			if t.is_bomb:
+				continue
+			var fresh: int = _count_adjacent_bombs(x, y)
+			if fresh != t.adjacent_bombs:
+				t.adjacent_bombs = fresh
+				if t.state == Tile.State.REVEALED:
+					t._update_visual()
+
+func _count_adjacent_bombs(cx: int, cy: int) -> int:
+	var n := 0
+	for dy in range(-1, 2):
+		for dx in range(-1, 2):
+			if dx == 0 and dy == 0:
+				continue
+			var np := Vector2i(cx + dx, cy + dy)
+			if not _in_bounds(np):
+				continue
+			if tiles[np.y][np.x].is_bomb:
+				n += 1
+	return n
+
+func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and event.keycode == KEY_R:
+		_reset_run()
+		return
+
+	if game_over or won:
+		return
+	if not (event is InputEventMouseButton) or not event.pressed:
+		return
+
+	var local := to_local(event.position)
+	var gx := int(floor(local.x / CELL_PX))
+	var gy := int(floor(local.y / CELL_PX))
+	var p := Vector2i(gx, gy)
+	if not _in_bounds(p):
+		return
+
+	match event.button_index:
+		MOUSE_BUTTON_LEFT:
+			_handle_left(p)
+		MOUSE_BUTTON_RIGHT:
+			_handle_right(p)
+
+func _handle_left(p: Vector2i) -> void:
+	if p == dodo_pos:
+		log_label.text = "O Dodo não pode se libertar sozinho — chegue a um dos lados dele."
+		return
+	if zone_of[p.y][p.x] > unlocked_zone:
+		var next_name: String = ZONE_NAMES[mini(unlocked_zone + 1, ZONE_COUNT - 1)]
+		log_label.text = "A %s ainda está fechada. Abra um caminho em cada quadrante." % next_name
+		return
+
+	var t: Tile = tiles[p.y][p.x]
+	if t.state == Tile.State.FLAGGED or t.state == Tile.State.REVEALED:
+		return
+
+	if not first_click_done:
+		_place_bombs(p)
+		first_click_done = true
+	else:
+		_ensure_safe_first_click(p)
+
+	if t.is_bomb:
+		_lose(t)
+		return
+
+	_flood_reveal(p)
+	_check_zone_unlock()
+	_update_status()
+	_check_win()
+
+func _handle_right(p: Vector2i) -> void:
+	if p == dodo_pos or zone_of[p.y][p.x] > unlocked_zone:
+		return
+	tiles[p.y][p.x].cycle_mark()
+
+# O flood NÃO atravessa a fronteira da zona liberada nem a casa do Dodo —
+# se vazasse, o gating por quadrante não existiria na prática.
+func _flood_reveal(start: Vector2i) -> void:
+	var queue: Array = [[start, 0]]
+	var max_delay := 0.0
+	while not queue.is_empty():
+		var entry: Array = queue.pop_front()
+		var p: Vector2i = entry[0]
+		var ring: int = entry[1]
+		if p == dodo_pos:
+			continue
+		if zone_of[p.y][p.x] > unlocked_zone:
+			continue
+		var t: Tile = tiles[p.y][p.x]
+		if t.state == Tile.State.REVEALED or t.state == Tile.State.FLAGGED:
+			continue
+		if t.is_bomb:
+			continue
+		var delay: float = Tile.cascade_delay(ring)
+		max_delay = maxf(max_delay, delay)
+		t.reveal(delay)
+		_mark_quadrant(p)
+		if t.adjacent_bombs == 0:
+			for dy in range(-1, 2):
+				for dx in range(-1, 2):
+					if dx == 0 and dy == 0:
+						continue
+					var np := Vector2i(p.x + dx, p.y + dy)
+					if not _in_bounds(np):
+						continue
+					queue.push_back([np, ring + 1])
+	_note_cascade(max_delay)
+
+# Só contam os tiles abertos DENTRO da zona atual: reabrir a orla depois de
+# liberar a mata não deve adiantar o progresso da zona seguinte.
+func _mark_quadrant(p: Vector2i) -> void:
+	if zone_of[p.y][p.x] != unlocked_zone:
+		return
+	quadrants_done[quadrant_of[p.y][p.x]] = true
+
+func _check_zone_unlock() -> void:
+	if unlocked_zone >= ZONE_COUNT - 1:
+		return
+	for done in quadrants_done:
+		if not done:
+			return
+	unlocked_zone += 1
+	quadrants_done = [false, false, false, false]
+	# A zona nova já conta o que estiver aberto nela (o flood pode ter
+	# encostado na fronteira antes de ela abrir).
+	for p in zone_members[unlocked_zone]:
+		if tiles[p.y][p.x].state == Tile.State.REVEALED:
+			quadrants_done[quadrant_of[p.y][p.x]] = true
+	_sweep_zone_light(unlocked_zone)
+	log_label.text = "Os quatro lados cederam. A %s se abre." % ZONE_NAMES[unlocked_zone]
+	print("Zona %d liberada (%s)." % [unlocked_zone + 1, ZONE_NAMES[unlocked_zone]])
+
+# A zona acende de fora pra dentro, no mesmo espírito da cascata do §18.
+func _sweep_zone_light(zone: int) -> void:
+	var tw := create_tween()
+	tw.tween_method(_apply_zone_light.bind(zone), 0.0, 1.0, ZONE_SWEEP_DURATION)
+
+func _apply_zone_light(progress: float, zone: int) -> void:
+	for p in zone_members[zone]:
+		if p == dodo_pos:
+			continue
+		# Tiles mais externos da zona acendem primeiro.
+		var head: float = zone_local_of[p.y][p.x] * 0.6
+		var amount: float = clampf((progress - head) / 0.4, 0.0, 1.0)
+		tiles[p.y][p.x].set_base_tint(TINT_LOCKED.lerp(TINT_UNLOCKED, amount))
+
+func _check_win() -> void:
+	for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		var np: Vector2i = dodo_pos + d
+		if not _in_bounds(np):
+			continue
+		if tiles[np.y][np.x].state != Tile.State.REVEALED:
+			continue
+		won = true
+		log_label.text = "Você alcançou o Dodo. Ele está livre!"
+		_show_end_after_cascade("DODO LIVRE!", "Você abriu caminho até o centro da ilha.")
+		print("Dodo libertado.")
+		return
+
+func _lose(exploded_tile: Tile) -> void:
+	game_over = true
+	exploded_tile.show_as_exploded()
+	var epicenter: Vector2i = exploded_tile.grid_pos
+	var max_delay := 0.0
+	for row in tiles:
+		for t in row:
+			if t == exploded_tile:
+				continue
+			var ring: int = maxi(
+				absi(t.grid_pos.x - epicenter.x),
+				absi(t.grid_pos.y - epicenter.y)
+			)
+			var delay: float = Tile.defeat_delay(ring)
+			if t.is_bomb and t.state != Tile.State.FLAGGED:
+				t.show_as_bomb(delay)
+				max_delay = maxf(max_delay, delay)
+			elif not t.is_bomb and t.state == Tile.State.FLAGGED:
+				t.show_as_wrong_flag(delay)
+				max_delay = maxf(max_delay, delay)
+	_note_cascade(max_delay)
+	log_label.text = "A armadilha disparou. O Dodo continua preso."
+	_show_end_after_cascade("O DODO CONTINUA PRESO", "Você chegou até a %s." % ZONE_NAMES[unlocked_zone])
+	print("Derrota na zona %d." % [unlocked_zone + 1])
+
+func _note_cascade(max_delay: float) -> void:
+	cascade_end_msec = maxi(cascade_end_msec, Tile.cascade_finish_msec(max_delay))
+
+func _show_end_after_cascade(main_text: String, subtitle_text: String) -> void:
+	var remaining: float = float(cascade_end_msec - Time.get_ticks_msec()) / 1000.0
+	if remaining <= 0.0:
+		_show_end(main_text, subtitle_text)
+		return
+	var timer := get_tree().create_timer(remaining)
+	timer.timeout.connect(_on_cascade_settled.bind(run_id, main_text, subtitle_text))
+
+func _on_cascade_settled(expected_run: int, main_text: String, subtitle_text: String) -> void:
+	if run_id != expected_run:
+		return
+	_show_end(main_text, subtitle_text)
+
+func _show_end(main_text: String, subtitle_text: String) -> void:
+	end_message_label.text = main_text
+	end_subtitle_label.text = subtitle_text
+	end_overlay.visible = true
+
+func _on_menu_pressed() -> void:
+	get_tree().change_scene_to_file("res://menu.tscn")
+
+func _on_quit_pressed() -> void:
+	get_tree().quit()

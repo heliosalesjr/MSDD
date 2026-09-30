@@ -76,6 +76,12 @@ var has_key: bool = false
 var hint_rect: Rect2 = Rect2()
 var hint_color: Color = Color.WHITE
 
+# Tingimento de base do tile, multiplicado em tudo que ele desenha. O padrão
+# é branco (nenhum efeito); o protótipo 4 usa isto pra escurecer os tiles de
+# zonas ainda bloqueadas. A animação de abertura multiplica o clarão por ele
+# em vez de assumir branco, senão o pop "acenderia" um tile bloqueado.
+var base_tint: Color = Color.WHITE
+
 # Verdadeiro entre a mudança lógica e o instante em que a abertura visual
 # começa: o estado já é REVEALED, mas o sprite continua mostrando o que
 # estava na tela antes (a tampa, ou a bandeira num reveal de derrota).
@@ -154,7 +160,7 @@ func _show_forced(tex: Texture2D, delay: float) -> void:
 	state = State.REVEALED
 	_forced_texture = tex
 	if delay < 0.0:
-		modulate = Color.WHITE
+		modulate = base_tint
 		texture = tex
 		return
 	_pending_prev_texture = texture
@@ -166,18 +172,26 @@ func reset() -> void:
 	_cancel_open()
 	_forced_texture = null
 	_pending_prev_texture = null
+	base_tint = Color.WHITE
 	state = State.HIDDEN
 	is_bomb = false
 	adjacent_bombs = 0
 	has_key = false
 	hint_rect = Rect2()
 	hint_color = Color.WHITE
-	modulate = Color.WHITE
+	modulate = base_tint
 	_update_visual()
 
 # Segundos até a abertura visual começar. 0 se o tile já abriu ou se não há
 # abertura agendada — quem precisa sincronizar algo com o tile (um sprite em
 # cima dele, por exemplo) consulta isto em vez de recalcular o atraso.
+# Troca o tingimento de base. Aplica na hora, exceto se o clarão de abertura
+# estiver correndo — nesse caso o tween já está mirando o base_tint novo.
+func set_base_tint(c: Color) -> void:
+	base_tint = c
+	if _flash_tween == null or not _flash_tween.is_valid():
+		modulate = c
+
 func time_until_open() -> float:
 	if not reveal_pending:
 		return 0.0
@@ -206,16 +220,16 @@ func _on_open_start() -> void:
 	_update_visual()
 	z_index = _rest_z + 1
 	_set_open_progress(OPEN_SCALE_FROM)
-	modulate = OPEN_FLASH
+	modulate = OPEN_FLASH * base_tint
 	if _flash_tween != null and _flash_tween.is_valid():
 		_flash_tween.kill()
 	_flash_tween = create_tween()
-	_flash_tween.tween_property(self, "modulate", Color.WHITE, OPEN_DURATION)
+	_flash_tween.tween_property(self, "modulate", base_tint, OPEN_DURATION)
 
 func _on_open_finished() -> void:
 	_set_open_progress(1.0)
 	z_index = _rest_z
-	modulate = Color.WHITE
+	modulate = base_tint
 	_open_tween = null
 
 # Escala a partir do centro do tile: Sprite2D não tem pivô, então
@@ -249,7 +263,7 @@ func _cancel_open() -> void:
 		z_index = _rest_z
 
 func _update_visual() -> void:
-	modulate = Color.WHITE
+	modulate = base_tint
 	var effective_rect := Vector4.ZERO
 	var effective_tint := Vector4(1.0, 1.0, 1.0, 1.0)
 	if reveal_pending:

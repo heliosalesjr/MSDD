@@ -58,6 +58,13 @@ func _build_menu() -> void:
 		_on_classic_pressed
 	)
 
+	_add_option(
+		vbox,
+		"4 — Save the Dodo",
+		"Abra caminho pelos quatro lados da ilha para chegar ao Dodo.\nCada anel só cede quando você o cerca por inteiro.",
+		_on_dodo_pressed
+	)
+
 func _add_option(parent: VBoxContainer, label: String, description: String, callback: Callable) -> void:
 	var option := VBoxContainer.new()
 	option.add_theme_constant_override("separation", 6)
@@ -86,6 +93,9 @@ func _on_explore_pressed() -> void:
 func _on_classic_pressed() -> void:
 	get_tree().change_scene_to_file("res://classic.tscn")
 
+func _on_dodo_pressed() -> void:
+	get_tree().change_scene_to_file("res://dodo.tscn")
+
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed:
 		if event.keycode == KEY_1 or event.keycode == KEY_ENTER or event.keycode == KEY_KP_ENTER:
@@ -94,3 +104,5 @@ func _unhandled_input(event: InputEvent) -> void:
 			_on_explore_pressed()
 		elif event.keycode == KEY_3:
 			_on_classic_pressed()
+		elif event.keycode == KEY_4:
+			_on_dodo_pressed()
