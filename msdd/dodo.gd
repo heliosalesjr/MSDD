@@ -23,9 +23,23 @@ const QUADRANT_NAMES := ["NO", "NE", "SO", "SE"]
 
 const ZONE_NAMES := ["Orla", "Mata", "Clareira"]
 
-# Tiles clicáveis são claros; os de zona ainda bloqueada, escuros.
-const TINT_UNLOCKED := Color(1.0, 1.0, 1.0)
-const TINT_LOCKED := Color(0.42, 0.45, 0.58)
+# Cada zona tem a sua própria cor, formando um gradiente da borda pro centro:
+# a Orla é sombra fria de mata fechada, a Clareira é luz quente onde o Dodo
+# está. É isso que dá ao jogador a leitura de profundidade que antes só
+# existia no código — sem isso ele enxerga "liberado vs bloqueado" e nada mais.
+const ZONE_TINTS := [
+	Color(0.78, 0.83, 0.94),   # Orla — fria e escura
+	Color(0.94, 0.96, 0.94),   # Mata — neutra
+	Color(1.14, 1.08, 0.88),   # Clareira — quente e clara
+]
+# Véu aplicado sobre a cor da zona enquanto ela está bloqueada. É um
+# MULTIPLICADOR, não uma cor fixa: com cor fixa, Mata e Clareira ficariam
+# idênticas no começo da partida e o jogador veria só duas regiões.
+# E é um multiplicador POR ZONA, mais fraco quanto mais fundo: a Clareira
+# "brilha através" da névoa, como uma luz distante que você está tentando
+# alcançar. Com um véu único os dois anéis apagados ficavam separados por
+# apenas 0.06 de luma — na prática, uma massa escura só.
+const LOCKED_VEIL := [0.42, 0.46, 0.56]
 const TINT_DODO := Color(1.35, 1.15, 0.55)
 
 # Quanto tempo a zona recém-liberada leva pra acender, de fora pra dentro.
@@ -273,11 +287,19 @@ func _reset_run() -> void:
 	_update_status()
 	print("Nova expedição — grid %dx%d, Dodo em %s." % [GRID_WIDTH, GRID_HEIGHT, dodo_pos])
 
+# A cor de um tile é a da sua zona, escurecida pelo véu se ela ainda não caiu.
+func _zone_tint(zone: int, unlocked: bool) -> Color:
+	var c: Color = ZONE_TINTS[zone]
+	if unlocked:
+		return c
+	var veil: float = LOCKED_VEIL[zone]
+	return Color(c.r * veil, c.g * veil, c.b * veil, 1.0)
+
 func _apply_all_zone_tints() -> void:
 	for y in GRID_HEIGHT:
 		for x in GRID_WIDTH:
-			var tint: Color = TINT_UNLOCKED if zone_of[y][x] <= unlocked_zone else TINT_LOCKED
-			tiles[y][x].set_base_tint(tint)
+			var z: int = zone_of[y][x]
+			tiles[y][x].set_base_tint(_zone_tint(z, z <= unlocked_zone))
 	tiles[dodo_pos.y][dodo_pos.x].set_base_tint(TINT_DODO)
 
 func _update_status() -> void:
@@ -518,13 +540,15 @@ func _sweep_zone_light(zone: int) -> void:
 	tw.tween_method(_apply_zone_light.bind(zone), 0.0, 1.0, ZONE_SWEEP_DURATION)
 
 func _apply_zone_light(progress: float, zone: int) -> void:
+	var veiled: Color = _zone_tint(zone, false)
+	var lit: Color = _zone_tint(zone, true)
 	for p in zone_members[zone]:
 		if p == dodo_pos:
 			continue
 		# Tiles mais externos da zona acendem primeiro.
 		var head: float = zone_local_of[p.y][p.x] * 0.6
 		var amount: float = clampf((progress - head) / 0.4, 0.0, 1.0)
-		tiles[p.y][p.x].set_base_tint(TINT_LOCKED.lerp(TINT_UNLOCKED, amount))
+		tiles[p.y][p.x].set_base_tint(veiled.lerp(lit, amount))
 
 func _check_win() -> void:
 	for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:

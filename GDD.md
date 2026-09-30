@@ -8,7 +8,8 @@
 > **Atualização 2026-09-24:** menu ganhou descrição curta por modo (§15.1); densidade de bombas da Exploração subiu de ~10% pra ~15% (§16.1).
 > **Atualização 2026-09-27:** §18 com a cascata de revelação — primeira camada puramente estética do projeto, compartilhada pelos protótipos 2 e 3.
 > **Atualização 2026-09-29:** cascata estendida ao protótipo 1 (§18 agora vale para os três modos).
-> **Atualização 2026-09-30:** §19 com o quarto protótipo (Save the Dodo — grid grande com liberação por zona/quadrante).
+> **Atualização 2026-09-30:** §19 com o quarto protótipo (Save the Dodo — grid grande com liberação por zona/quadrante). Decisões em aberto deste protótipo estão na **§19.5**.
+> **Correção 2026-09-30:** `tile_hint.gdshader` descartava o `modulate` dos tiles (§18.3) — nenhum tingimento de tile jamais apareceu na tela até aqui, incluindo o clarão da cascata.
 
 ---
 
@@ -565,6 +566,7 @@ No grid 24×14, a maior cascata possível dá ~0.8s de ponta a ponta.
 - **Overshoot cortado pelos vizinhos.** Durante o pop o tile sobe de `z_index` — sem isso, o overshoot de 1.06 fica escondido atrás dos tiles irmãos desenhados depois.
 - **Extensão da onda durante a espera** (protótipo 2). Um clique novo enquanto a onda corre **estende** o prazo, mas o timer já criado dispararia no prazo antigo — e o knight andaria em cima da onda nova. `_after_cascade` se **reagenda** ao acordar, reconsultando o prazo, em vez de disparar cego. Nos protótipos 1 e 3 isso não pode acontecer — lá a espera só existe pra cobrir a tela de fim de partida, e a partir daí os cliques já estão bloqueados —, então eles usam um `_show_end_after_cascade` mais simples, de disparo único.
 - **Reset no meio da onda.** Nos protótipos 1 e 3, `R` reinicia a partida sem recriar a cena, então um timer pendente sobreviveria ao reset e dispararia num jogo novo — overlay fantasma no §17, e no §15 também um sprite de chave da partida anterior. Um `run_id` incrementado a cada run descarta esses timers. O protótipo 2 não precisa disso: lá o `R` chama `reload_current_scene()` e a cena inteira morre junto com os timers.
+- **O shader engolia o `modulate` — bug encontrado só em 2026-09-30.** `tile_hint.gdshader` terminava com `COLOR = tex;`, onde `tex` era um `texture(TEXTURE, UV)` cru. Em Godot 4 o `COLOR` do fragment **já chega multiplicado pelo `modulate` do nó**, então sobrescrevê-lo daquele jeito descartava a modulação inteira, silenciosamente. Consequência: **o clarão de abertura nunca apareceu em protótipo nenhum** desde que a cascata foi escrita — o pop de escala funcionava (não passa pelo shader) e mascarou a ausência. O tingimento de zona do §19 também não aparecia, e foi por ele que o bug apareceu. Correção: não sobrescrever `COLOR`, só aplicar o hint por cima (`COLOR.rgb *= hint_tint.rgb`). **Lição:** um shader que escreve `COLOR = <algo montado do zero>` está optando por fora de tudo que o CanvasItem já calculou — `modulate`, `self_modulate` e o modulate dos ancestrais.
 - **Textura durante a pendência.** Um tile com bandeira errada mantém a **bandeira** até a onda chegar, não volta pra tampa. Por isso `_pending_prev_texture` guarda o que estava na tela em vez de assumir `TEX_HIDDEN`.
 - **Sprites de chave** (protótipo 1). O maior ajuste que a cascata exigiu no §15: a chave é um `AnimatedSprite2D` *em cima* do tile, então ela apareceria flutuando sobre uma tampa fechada. Agora o sprite espera o tile dela abrir, consultando `Tile.time_until_open()`. O **score e o reset do timer de 15s continuam imediatos** — a animação não pode cobrar tempo de um modo cronometrado. Na derrota, as chaves perdidas surgem conforme a onda passa por cada uma.
 - **Indicadores de chave via shader** (protótipo 1). Os tints de `tile_hint.gdshader` entram junto com o pop de cada tile, porque `_update_visual()` só roda quando a onda chega. O ganho foi inesperado: os 5 rastros coloridos se desenham progressivamente em vez de aparecerem todos num frame. Era o risco que tinha feito o §15 ficar de fora na primeira leva — na prática a cascata **melhorou** essa leitura.
@@ -579,6 +581,8 @@ No grid 24×14, a maior cascata possível dá ~0.8s de ponta a ponta.
 ---
 
 ## 19. Estado do Protótipo 4 — Save the Dodo (Set/2026)
+
+> 👉 **Decisões em aberto esperando playtest: §19.5.** É o painel de ajuste deste protótipo — cada item traz o que está valendo hoje, o sinal que indica qual caminho tomar e onde mexer no código.
 
 **Escopo.** Quarto protótipo, botão "4" do menu. Testa **um eixo de design que nenhum dos outros toca: progressão espacial obrigatória**. O jogador não escolhe onde cavar — precisa cercar o objetivo por inteiro antes de poder se aproximar dele. As mecânicas de minesweeper (bombas, números, flood-fill, flags) ficam intactas embaixo; o que é novo é o **gating por zona e quadrante** montado em cima.
 
@@ -597,7 +601,7 @@ No grid 24×14, a maior cascata possível dá ~0.8s de ponta a ponta.
 
 **O gating (a mecânica nova)**
 
-- Começa só com a **Orla** clicável. Casas de zona bloqueada são desenhadas **escuras** (`Tile.base_tint`), as clicáveis em cor cheia — é a leitura visual pedida: claro = disponível.
+- Começa só com a **Orla** clicável. O tingimento das casas (`Tile.base_tint`) carrega **duas informações ao mesmo tempo** — ver §19.2, "As zonas precisam ser visíveis, não só existir".
 - Pra abrir a zona seguinte, o jogador precisa ter revelado **ao menos uma casa em cada um dos 4 quadrantes** da zona atual. Quadrante é medido em relação ao Dodo (NO/NE/SO/SE), não à tela.
 - Ao abrir uma zona, o contador de quadrantes **zera** — a Mata exige os seus próprios quatro, e assim por diante.
 - A **Clareira não tem gating de saída**: é a última, então lá é só chegar ao Dodo.
@@ -614,6 +618,25 @@ No grid 24×14, a maior cascata possível dá ~0.8s de ponta a ponta.
 **Tingimento por `Tile.base_tint`.** Escurecer as zonas bloqueadas com `modulate` direto brigaria com a animação de abertura do §18, que também mexe em `modulate`. O `Tile` ganhou um `base_tint` que multiplica tudo que ele desenha, e o clarão do pop passou a ser `OPEN_FLASH * base_tint` em vez de branco absoluto — senão abrir um tile "acenderia" temporariamente uma casa que deveria estar apagada. Default branco, então os outros três protótipos não mudam.
 
 **A zona acende de fora pra dentro.** Ao ser liberada, a zona não troca de cor num frame: um tween de 0.55s varre o tint da borda externa dela pra dentro, na mesma linguagem da cascata do §18. O sweep itera só as casas daquela zona (pré-computadas em `zone_members`), não o grid inteiro.
+
+**As zonas precisam ser visíveis, não só existir.** A primeira versão pintava só dois estados — liberado (branco) e bloqueado (cinza) — e nisso as três zonas eram invisíveis: o jogador via "onde posso clicar" e nada da estrutura em anéis que rege o modo inteiro. O tingimento passou a carregar **dois eixos**:
+
+1. **Cor por zona**, formando um gradiente da borda pro centro: Orla fria e escura (mata fechada), Mata neutra, Clareira quente e clara (a luz onde o Dodo está).
+2. **Véu de bloqueio**, um multiplicador aplicado por cima dessa cor.
+
+O véu é multiplicativo, e não uma cor fixa, justamente pra preservar o eixo 1 debaixo dele — com cor fixa, Mata e Clareira ficariam idênticas enquanto ambas estão fechadas, que é o estado do começo da partida. E o multiplicador **varia por zona** (0.42 / 0.46 / 0.56, mais fraco quanto mais fundo): a Clareira "brilha através" da névoa, como uma luz distante. Com um véu único os dois anéis apagados ficavam separados por só 0.06 de luma — na prática uma massa escura só.
+
+Contraste resultante, em luma:
+
+| Fronteira que o jogador vê lado a lado | Δ luma |
+|---|---|
+| Orla liberada vs Mata bloqueada | **+0.390** |
+| Mata liberada vs Clareira bloqueada | **+0.350** |
+| Mata bloqueada vs Clareira bloqueada (início de partida) | +0.164 |
+| Orla liberada vs Mata liberada | +0.124 |
+| Mata liberada vs Clareira liberada | +0.123 |
+
+As duas primeiras linhas são o que responde "posso clicar aqui?", e por isso são as maiores por uma margem larga: a leitura de zona nunca compete com a de disponibilidade.
 
 ### 19.3 O que este protótipo testa que os outros não
 
@@ -637,7 +660,7 @@ Dois fatos (não hipóteses) sobre o estado atual:
 
 ### 19.5 Painel de decisões — levar pro playtest
 
-Cada item abaixo é uma decisão em aberto, com o que está valendo hoje, o sinal que indica qual caminho tomar, e onde mexer. **Ordem de prioridade:** 1-3 provavelmente precisam de ajuste; 4-6 dependem do que o playtest mostrar; 7-8 são de produto, não de balanceamento.
+Cada item abaixo é uma decisão em aberto, com o que está valendo hoje, o sinal que indica qual caminho tomar, e onde mexer. **Ordem de prioridade:** 1-3 provavelmente precisam de ajuste; 4-7 dependem do que o playtest mostrar; 8-9 são de produto, não de balanceamento.
 
 ---
 
@@ -708,7 +731,17 @@ Cada item abaixo é uma decisão em aberto, com o que está valendo hoje, o sina
 
 ---
 
-**7. Arte do Dodo**
+**7. Legibilidade dos números na Orla**
+
+- **Hoje:** a Orla é tingida a ~0.83 de luma (`ZONE_TINTS[0]`), então os números revelados ali saem mais escuros que nos outros modos.
+- **Por que assim:** o gradiente de zona precisa de amplitude pra ser perceptível, e a Orla é o extremo escuro dele. Já limitei o mínimo a 0.78 pensando nisso, mas é tinta sobre o número, não atrás dele.
+- **Sinal:** cansaço ou erro de leitura ao contar números na Orla, especialmente os de cor mais escura (o 4 e o 7 da tileset).
+- **Opções:** clarear só `ZONE_TINTS[0]` e compensar a amplitude escurecendo o véu; ou aplicar o tint de zona **apenas nas casas fechadas**, deixando as reveladas em branco — custa a leitura de profundidade justamente na área aberta, que é onde o jogador mais olha.
+- **Onde:** `dodo.gd`, `ZONE_TINTS`; a segunda opção mexe em `_apply_all_zone_tints()` e `_apply_zone_light()`.
+
+---
+
+**8. Arte do Dodo**
 
 - **Hoje:** galinha do Farm RPG pack, 4 frames de 16×16, escala 1.5.
 - **Por que 1.5 e não 2.0:** a 2× o sprite cobre os números das casas vizinhas, que é justamente onde você precisa enxergar pra fechar o cerco.
@@ -716,7 +749,7 @@ Cada item abaixo é uma decisão em aberto, com o que está valendo hoje, o sina
 
 ---
 
-**8. Por que o jogador se importa com o Dodo?**
+**9. Por que o jogador se importa com o Dodo?**
 
 - **Hoje:** nada. Abrir uma zona só dá acesso à seguinte; não há score, item, nem flavor text.
 - **O ponto:** o modo se chama *Save the Dodo* mas não dá motivo emocional nenhum pra salvá-lo. Esse é o gap menos técnico e talvez o mais importante.
