@@ -56,8 +56,15 @@ const COIN_COUNT := 50
 const COIN_PX := 15          # quase o tamanho de uma casa (16px)
 const COIN_FRAMES := 8       # um giro completo
 const COIN_SPIN_FPS := 14.0
-const COIN_POP_RISE := 22.0  # altura do salto, em px
-const COIN_POP_DURATION := 0.60
+# O salto tem três trechos: sobe, cai quase de volta, e torna a subir — é
+# nessa segunda subida que ela some, como se escapasse pelo alto. Alturas em
+# px; a soma das três durações dá ~2,0s.
+const COIN_POP_RISE := 24.0      # apogeu do primeiro salto
+const COIN_POP_SETTLE := 3.0     # até onde ela cai (acima da casa de origem)
+const COIN_POP_ESCAPE := 42.0    # segunda subida, bem mais alta
+const COIN_POP_UP_TIME := 0.60
+const COIN_POP_DOWN_TIME := 0.52
+const COIN_POP_ESCAPE_TIME := 0.92
 # Espessura mínima: é ela que a moeda mostra quando está de perfil, e é o que
 # impede que o frame de 90° simplesmente desapareça.
 const COIN_HALF_THICKNESS := 1.6
@@ -505,11 +512,25 @@ func _play_coin_pop(idx: int) -> void:
 	sp.frame = randi() % COIN_FRAMES
 	sp.play()
 
-	var tw := create_tween().set_parallel(true)
-	tw.tween_property(sp, "position", sp.position + Vector2(0.0, -COIN_POP_RISE), COIN_POP_DURATION) \
+	var home: Vector2 = coin_home[idx]
+	var apex := home + Vector2(0.0, -COIN_POP_RISE)
+	var settle := home + Vector2(0.0, -COIN_POP_SETTLE)
+	var escape := home + Vector2(0.0, -COIN_POP_ESCAPE)
+
+	var tw := create_tween()
+	# Sobe desacelerando, como quem perde impulso contra a gravidade.
+	tw.tween_property(sp, "position", apex, COIN_POP_UP_TIME) \
 		.set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_CUBIC)
-	tw.tween_property(sp, "modulate:a", 0.0, COIN_POP_DURATION * 0.55) \
-		.set_delay(COIN_POP_DURATION * 0.45)
+	# Cai acelerando, de volta pra perto da casa.
+	tw.tween_property(sp, "position", settle, COIN_POP_DOWN_TIME) \
+		.set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_CUBIC)
+	# Torna a subir, agora mais alto — e é aqui que ela se apaga.
+	tw.tween_property(sp, "position", escape, COIN_POP_ESCAPE_TIME) \
+		.set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_QUAD)
+	# O fade corre junto com a última subida, começando depois que ela já
+	# pegou altura — senão a moeda some antes de ficar claro que subiu de novo.
+	tw.parallel().tween_property(sp, "modulate:a", 0.0, COIN_POP_ESCAPE_TIME * 0.72) \
+		.set_delay(COIN_POP_ESCAPE_TIME * 0.28)
 	tw.chain().tween_callback(_hide_coin.bind(idx))
 	coin_tweens[idx] = tw
 
