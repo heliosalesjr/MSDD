@@ -56,15 +56,29 @@ const COIN_COUNT := 50
 const COIN_PX := 15          # quase o tamanho de uma casa (16px)
 const COIN_FRAMES := 8       # um giro completo
 const COIN_SPIN_FPS := 14.0
-# O salto tem três trechos: sobe, cai quase de volta, e torna a subir — é
-# nessa segunda subida que ela some, como se escapasse pelo alto. Alturas em
-# px; a soma das três durações dá ~2,0s.
-const COIN_POP_RISE := 24.0      # apogeu do primeiro salto
-const COIN_POP_SETTLE := 3.0     # até onde ela cai (acima da casa de origem)
-const COIN_POP_ESCAPE := 42.0    # segunda subida, bem mais alta
-const COIN_POP_UP_TIME := 0.60
-const COIN_POP_DOWN_TIME := 0.52
-const COIN_POP_ESCAPE_TIME := 0.92
+# O salto não é uma sequência de trechos com easing escolhido a dedo: é uma
+# parábola integrada de verdade. A moeda sai com COIN_LAUNCH, a gravidade a
+# traz de volta, e ela quica devolvendo uma fração da velocidade de impacto.
+# Duas coisas saem de graça disso:
+#   1. O "easing" natural — a curva É a física, então a desaceleração na
+#      subida e a aceleração na queda são exatas, não aproximadas.
+#   2. A duração total EMERGE dos parâmetros em vez de ser imposta. Logo,
+#      sortear os parâmetros varia altura, tempo e ritmo de forma coerente
+#      ENTRE SI: a moeda que sobe mais alto também fica mais tempo no ar.
+# Isso é o que impede cinco moedas coletadas juntas de se moverem em bloco.
+const COIN_LAUNCH := 167.0        # velocidade de saída, px/s
+const COIN_GRAVITY := 368.0       # px/s²
+
+# Variação por moeda. O jitter é multiplicativo pra que a física continue
+# coerente — não se sorteia "duração", se sorteia o impulso e o peso.
+# As faixas são largas de propósito: com gravidade alta o voo médio é curto,
+# e é a amplitude que faz um punhado de moedas parecer um punhado de moedas
+# em vez de uma animação repetida cinco vezes.
+const COIN_LAUNCH_JITTER := 0.20
+const COIN_GRAVITY_JITTER := 0.18
+const COIN_RESTITUTION_RANGE := Vector2(0.55, 0.92)
+const COIN_DRIFT_MAX := 16.0      # deriva lateral ao longo do voo, px
+const COIN_SPIN_SCALE := Vector2(0.60, 1.70)
 # Espessura mínima: é ela que a moeda mostra quando está de perfil, e é o que
 # impede que o frame de 90° simplesmente desapareça.
 const COIN_HALF_THICKNESS := 1.6
@@ -96,6 +110,7 @@ var coin_at: Dictionary = {}          # Vector2i -> índice da moeda
 var coin_home: Array[Vector2] = []    # de onde cada moeda salta
 var coin_sprites: Array[AnimatedSprite2D] = []
 var coin_tweens: Array = []           # Tween do salto, ou null
+var coin_flight: Array = []           # parâmetros do voo atual de cada moeda
 var coin_collected: Array[bool] = []
 var coins_found: int = 0
 
@@ -206,6 +221,7 @@ func _setup_coins() -> void:
 		add_child(sp)
 		coin_sprites.append(sp)
 		coin_tweens.append(null)
+		coin_flight.append({})
 
 # Um giro completo em COIN_FRAMES quadros. O volume vem de três coisas:
 # a largura encolhendo com o cosseno, a face de trás recebendo menos luz, e
@@ -379,6 +395,7 @@ func _reset_run() -> void:
 		if tw != null and tw.is_valid():
 			tw.kill()
 		coin_tweens[i] = null
+		coin_flight[i] = {}
 		coin_sprites[i].visible = false
 		coin_sprites[i].stop()
 	position = base_position
@@ -510,29 +527,53 @@ func _play_coin_pop(idx: int) -> void:
 	sp.visible = true
 	# Fase inicial aleatória: duas moedas coletadas juntas não giram em uníssono.
 	sp.frame = randi() % COIN_FRAMES
+	sp.speed_scale = randf_range(COIN_SPIN_SCALE.x, COIN_SPIN_SCALE.y)
 	sp.play()
 
-	var home: Vector2 = coin_home[idx]
-	var apex := home + Vector2(0.0, -COIN_POP_RISE)
-	var settle := home + Vector2(0.0, -COIN_POP_SETTLE)
-	var escape := home + Vector2(0.0, -COIN_POP_ESCAPE)
+	var v0: float = COIN_LAUNCH * randf_range(1.0 - COIN_LAUNCH_JITTER, 1.0 + COIN_LAUNCH_JITTER)
+	var g: float = COIN_GRAVITY * randf_range(1.0 - COIN_GRAVITY_JITTER, 1.0 + COIN_GRAVITY_JITTER)
+	var rest: float = randf_range(COIN_RESTITUTION_RANGE.x, COIN_RESTITUTION_RANGE.y)
+	var drift: float = randf_range(-COIN_DRIFT_MAX, COIN_DRIFT_MAX)
+
+	# Primeiro arco inteiro (subida + queda), mais a SUBIDA do segundo: é
+	# nela que a moeda se apaga, então o voo termina no apogeu do quique.
+	var first_arc: float = 2.0 * v0 / g
+	var second_rise: float = rest * v0 / g
+	var total: float = first_arc + second_rise
+
+	coin_flight[idx] = {
+		"v0": v0, "g": g, "rest": rest,
+		"drift": drift, "total": total, "bounce": first_arc,
+	}
 
 	var tw := create_tween()
-	# Sobe desacelerando, como quem perde impulso contra a gravidade.
-	tw.tween_property(sp, "position", apex, COIN_POP_UP_TIME) \
-		.set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_CUBIC)
-	# Cai acelerando, de volta pra perto da casa.
-	tw.tween_property(sp, "position", settle, COIN_POP_DOWN_TIME) \
-		.set_ease(Tween.EASE_IN).set_trans(Tween.TRANS_CUBIC)
-	# Torna a subir, agora mais alto — e é aqui que ela se apaga.
-	tw.tween_property(sp, "position", escape, COIN_POP_ESCAPE_TIME) \
-		.set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_QUAD)
-	# O fade corre junto com a última subida, começando depois que ela já
-	# pegou altura — senão a moeda some antes de ficar claro que subiu de novo.
-	tw.parallel().tween_property(sp, "modulate:a", 0.0, COIN_POP_ESCAPE_TIME * 0.72) \
-		.set_delay(COIN_POP_ESCAPE_TIME * 0.28)
+	# O tempo corre linear; quem desenha a curva é _coin_height.
+	tw.tween_method(_set_coin_flight.bind(idx), 0.0, total, total).set_trans(Tween.TRANS_LINEAR)
+	# O fade corre junto com a segunda subida, começando depois que ela já
+	# pegou altura — senão a moeda some antes de ficar claro que quicou.
+	var fade_start: float = first_arc + second_rise * 0.30
+	tw.parallel().tween_property(sp, "modulate:a", 0.0, total - fade_start).set_delay(fade_start)
 	tw.chain().tween_callback(_hide_coin.bind(idx))
 	coin_tweens[idx] = tw
+
+# Altura acima da casa no instante t do voo. Dois arcos balísticos: o de
+# lançamento e o do quique.
+func _coin_height(t: float, f: Dictionary) -> float:
+	var g: float = f["g"]
+	var bounce: float = f["bounce"]
+	if t < bounce:
+		return maxf(f["v0"] * t - 0.5 * g * t * t, 0.0)
+	var t2: float = t - bounce
+	var v1: float = f["v0"] * f["rest"]
+	return maxf(v1 * t2 - 0.5 * g * t2 * t2, 0.0)
+
+func _set_coin_flight(t: float, idx: int) -> void:
+	var f: Dictionary = coin_flight[idx]
+	if f.is_empty():
+		return
+	# Sem força horizontal, a deriva é velocidade constante: linear no tempo.
+	var x: float = f["drift"] * (t / f["total"])
+	coin_sprites[idx].position = coin_home[idx] + Vector2(x, -_coin_height(t, f))
 
 func _hide_coin(idx: int) -> void:
 	coin_sprites[idx].visible = false
