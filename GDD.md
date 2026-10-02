@@ -10,6 +10,7 @@
 > **Atualização 2026-09-29:** cascata estendida ao protótipo 1 (§18 agora vale para os três modos).
 > **Atualização 2026-09-30:** §19 com o quarto protótipo (Save the Dodo — grid grande com liberação por zona/quadrante). Decisões em aberto deste protótipo estão na **§19.5**.
 > **Correção 2026-09-30:** `tile_hint.gdshader` descartava o `modulate` dos tiles (§18.3) — nenhum tingimento de tile jamais apareceu na tela até aqui, incluindo o clarão da cascata.
+> **Atualização 2026-10-02:** Save the Dodo perdeu o first-click-safe por região; só a primeira casa da partida é protegida (§19.2, §19.5 item 3).
 
 ---
 
@@ -613,7 +614,13 @@ No grid 24×14, a maior cascata possível dá ~0.8s de ponta a ponta.
 
 **O flood-fill não atravessa a fronteira da zona.** Sem isso o gating não existiria na prática: um flood grande na Orla vazaria pra dentro e entregaria a Clareira de graça. O BFS descarta qualquer casa de zona ainda bloqueada.
 
-**First-click safe por região, não por partida.** O gating **obriga** o jogador a abrir os quatro quadrantes, e o quadrante seguinte quase sempre fica longe de qualquer número já revelado — ou seja, ele é forçado a clicar às cegas. Com 15% de bombas e 12 regiões (3 zonas × 4 quadrantes), a chance de sobreviver a doze cliques cegos é ~14%. O modo seria injogável. Cada região ganha então o seu **próprio** primeiro clique protegido, movendo as bombas do entorno pra longe — exatamente o mesmo remédio que o protótipo 2 aplicou por chunk (§16.3). Dentro da região, os cliques seguintes têm risco normal.
+**First-click safe só na primeira casa da partida** *(decisão revista em 2026-10-02)*. A primeira versão protegia o primeiro clique de cada uma das 12 regiões (3 zonas × 4 quadrantes), como o protótipo 2 faz por chunk (§16.3). O raciocínio era: o gating obriga a abrir os quatro quadrantes, o quadrante seguinte fica longe de qualquer número revelado, logo o jogador seria forçado a clicar às cegas — e doze cliques cegos a 15% dão ~14% de sobrevivência.
+
+**Esse raciocínio partia de uma premissa errada sobre como se joga o modo.** Ele assumia que o jogador *teleporta* para o próximo quadrante com um clique cego. Com só a primeira casa protegida, ele não pode: precisa **cavar até lá**, expandindo a área segura pelos números, como num minesweeper comum. O risco deixa de ser "12 apostas de 15%" e passa a ser o risco normal de dedução, que é o do jogo todo.
+
+E isso **conserta o gating**, que era o risco de design nº 1 deste protótipo (§19.3): cumprir quadrante deixa de ser "clicar quatro vezes em cantos aleatórios" e vira "estender meu território até alcançar os quatro lados". O gating passa a medir alcance conquistado em vez de cliques gastos — que era exatamente a diferença entre tensão e burocracia.
+
+O preço é que o modo fica **bem mais difícil e mais longo**: atravessar 2485 casas deduzindo, da borda ao centro, sem errar uma vez. É uma escolha deliberada de identidade — ver §19.5 item 2, que fica mais sensível por causa disto.
 
 **Tingimento por `Tile.base_tint`.** Escurecer as zonas bloqueadas com `modulate` direto brigaria com a animação de abertura do §18, que também mexe em `modulate`. O `Tile` ganhou um `base_tint` que multiplica tudo que ele desenha, e o clarão do pop passou a ser `OPEN_FLASH * base_tint` em vez de branco absoluto — senão abrir um tile "acenderia" temporariamente uma casa que deveria estar apagada. Default branco, então os outros três protótipos não mudam.
 
@@ -686,20 +693,17 @@ Cada item abaixo é uma decisão em aberto, com o que está valendo hoje, o sina
 **2. Densidade de bombas**
 
 - **Hoje:** 15% (372 bombas), a mesma dos outros três modos.
-- **Por que pode estar errado:** nos outros modos o jogador escolhe onde cavar. Aqui o gating **obriga** exposição em 12 regiões distintas.
-- **Sinal:** morrer repetidamente antes da Mata, mesmo com a proteção por região.
+- **Por que pode estar errado:** desde que a proteção por região saiu (item 3), este é **o** botão de dificuldade do modo. O jogador atravessa 2485 casas deduzindo, da borda ao centro, e um único erro encerra — é muito mais exposição acumulada que nos outros modos, onde o board tem 336 casas.
+- **Sinal:** morrer repetidamente antes da Mata; ou chegar à Clareira sentindo que foi sorte, não leitura.
 - **Opções:** baixar para 10-12%; ou densidade **crescente por zona** (Orla mansa, Clareira perigosa), que transforma a aproximação em tensão em vez de repetição.
 - **Onde:** `dodo.gd`, `BOMB_DENSITY`. A versão por zona exige mudar `_place_bombs` para sortear por `zone_members`.
 
 ---
 
-**3. First-click safe por região — manter, afrouxar ou remover**
+**3. ~~First-click safe por região~~ — RESOLVIDO em 2026-10-02: removido**
 
-- **Hoje:** cada uma das 12 regiões (3 zonas × 4 quadrantes) tem o seu primeiro clique protegido.
-- **Por que existe:** sem isso a chance de sobreviver aos doze cliques cegos obrigatórios é ~14% (§19.2). Mesmo remédio que o protótipo 2 usa por chunk (§16.3).
-- **A dúvida legítima:** 12 cliques garantidos podem tirar peso demais do risco — vira "clique de graça em cada canto".
-- **Opções:** manter; proteger só a primeira região de cada **zona** (3 em vez de 12); ou remover e compensar com densidade menor.
-- **Onde:** `dodo.gd`, `_ensure_safe_first_click()` e a chave `regions_first_clicked` (trocar `Vector2i(zona, quadrante)` por só a zona afrouxa para 3).
+- **Decidido:** só a **primeira casa da partida** é protegida. A exploração é feita casa a casa, cavando pelos números até alcançar cada quadrante. Ver §19.2 pro raciocínio completo.
+- **Fica de olho em:** se o modo se mostrar longo e punitivo demais, o ajuste agora é a **densidade** (item 2), não voltar a proteção — a proteção por região era o que tornava o gating burocrático.
 
 ---
 
@@ -707,7 +711,7 @@ Cada item abaixo é uma decisão em aberto, com o que está valendo hoje, o sina
 
 - **Hoje:** uma casa revelada por quadrante libera a zona seguinte.
 - **Sinal de que funcionou:** você se pega **planejando a ordem** dos quadrantes — abrir primeiro o que parece seguro, guardar o pior pro fim, usar os números da fronteira pra escolher por onde encostar.
-- **Sinal de que falhou:** você clica quatro vezes em cantos aleatórios sem pensar e segue.
+- **Sinal de que falhou:** você clica quatro vezes em cantos aleatórios sem pensar e segue. *(A remoção da proteção por região em 2026-10-02 deve ter matado esse cenário — clicar em canto aleatório agora é 15% de morte, então não há atalho barato. Vale confirmar no playtest se o gating ganhou peso de verdade.)*
 - **Opções se falhar:** exigir **duas** casas por quadrante; exigir uma casa **por quadrante e por sub-anel**; ou casar com a densidade crescente do item 2, que faz cercar ficar progressivamente mais caro.
 - **Onde:** `dodo.gd`, `_mark_quadrant()` e `_check_zone_unlock()` — hoje `quadrants_done` é um array de bool; virar contador resolve a variante "duas casas".
 

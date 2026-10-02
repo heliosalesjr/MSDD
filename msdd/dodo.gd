@@ -66,9 +66,6 @@ var unlocked_zone: int = 0
 var quadrants_done: Array[bool] = [false, false, false, false]
 
 var first_click_done: bool = false
-# Vector2i(zona, quadrante) -> true. Cada uma das 12 regiões tem o seu
-# primeiro clique protegido, não só a primeira região da partida.
-var regions_first_clicked: Dictionary = {}
 var game_over: bool = false
 var won: bool = false
 
@@ -272,7 +269,6 @@ func _reset_run() -> void:
 	run_id += 1
 	cascade_end_msec = 0
 	first_click_done = false
-	regions_first_clicked.clear()
 	game_over = false
 	won = false
 	unlocked_zone = 0
@@ -350,64 +346,6 @@ func _place_bombs(safe_center: Vector2i) -> void:
 				tiles[y][x].adjacent_bombs = _count_adjacent_bombs(x, y)
 	print("Bombas plantadas: %d de %d casas." % [count, GRID_WIDTH * GRID_HEIGHT])
 
-# O gating obriga o jogador a abrir cada um dos quatro quadrantes de uma
-# zona, e o quadrante seguinte costuma ficar longe de qualquer número já
-# revelado — ou seja, ele é forçado a clicar às cegas. Com ~15% de bombas
-# isso daria ~14% de chance de sobreviver às 12 regiões. Então cada região
-# ganha o seu próprio primeiro clique protegido, como o protótipo 2 faz por
-# chunk (GDD §16.3). Dentro da região, os cliques seguintes têm risco normal.
-func _ensure_safe_first_click(p: Vector2i) -> void:
-	var region := Vector2i(zone_of[p.y][p.x], quadrant_of[p.y][p.x])
-	if regions_first_clicked.has(region):
-		return
-	regions_first_clicked[region] = true
-
-	var to_move: Array[Vector2i] = []
-	for dy in range(-1, 2):
-		for dx in range(-1, 2):
-			var np := Vector2i(p.x + dx, p.y + dy)
-			if _in_bounds(np) and tiles[np.y][np.x].is_bomb:
-				to_move.append(np)
-	if to_move.is_empty():
-		return
-
-	# Destinos: casas livres longe do clique e fora do entorno do Dodo.
-	var destinations: Array[Vector2i] = []
-	for y in GRID_HEIGHT:
-		for x in GRID_WIDTH:
-			var np := Vector2i(x, y)
-			if tiles[y][x].is_bomb:
-				continue
-			if tiles[y][x].state == Tile.State.REVEALED:
-				continue
-			if maxi(absi(np.x - p.x), absi(np.y - p.y)) <= 1:
-				continue
-			if maxi(absi(np.x - dodo_pos.x), absi(np.y - dodo_pos.y)) <= 1:
-				continue
-			destinations.append(np)
-	destinations.shuffle()
-
-	var moved := 0
-	for src in to_move:
-		if moved >= destinations.size():
-			break
-		tiles[src.y][src.x].is_bomb = false
-		var dst: Vector2i = destinations[moved]
-		tiles[dst.y][dst.x].is_bomb = true
-		moved += 1
-
-	# Bombas mudaram de lugar: os números podem ter mudado em qualquer canto.
-	for y in GRID_HEIGHT:
-		for x in GRID_WIDTH:
-			var t: Tile = tiles[y][x]
-			if t.is_bomb:
-				continue
-			var fresh: int = _count_adjacent_bombs(x, y)
-			if fresh != t.adjacent_bombs:
-				t.adjacent_bombs = fresh
-				if t.state == Tile.State.REVEALED:
-					t._update_visual()
-
 func _count_adjacent_bombs(cx: int, cy: int) -> int:
 	var n := 0
 	for dy in range(-1, 2):
@@ -460,8 +398,6 @@ func _handle_left(p: Vector2i) -> void:
 	if not first_click_done:
 		_place_bombs(p)
 		first_click_done = true
-	else:
-		_ensure_safe_first_click(p)
 
 	if t.is_bomb:
 		_lose(t)
