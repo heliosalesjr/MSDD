@@ -46,6 +46,20 @@ const TINT_DODO := Color(1.35, 1.15, 0.55)
 const ZONE_SWEEP_DURATION := 0.55
 
 const DODO_SHEET := preload("res://assets/Farm RPG FREE 16x16 - Tiny Asset Pack/Farm RPG FREE 16x16 - Tiny Asset Pack/Farm Animals/Chicken Blonde  Green.png")
+# Moedas: espalhadas como as bombas, mas sorteadas DEPOIS delas, entre as
+# casas que sobraram. Sem sprite adequado no projeto (as "Gold Stones" do
+# Tiny Swords são 128x128 e borrariam num tile de 16px), a moeda é desenhada
+# em código — 9x9 nítidos, no tamanho certo.
+const COIN_COUNT := 50
+const COIN_PX := 7
+# A moeda fica no canto superior-direito da casa, não no centro: centrada,
+# ela cobriria o número — que é justamente a informação de que o jogador
+# precisa pra deduzir onde pisar.
+const COIN_OFFSET := Vector2(11.0, 5.0)
+const COIN_EDGE := Color(0.40, 0.26, 0.04)
+const COIN_BODY := Color(0.96, 0.76, 0.20)
+const COIN_SHINE := Color(1.0, 0.94, 0.66)
+
 const DODO_FRAME_SIZE := 16
 const DODO_FRAME_COUNT := 4
 const DODO_FPS := 4.0
@@ -61,6 +75,11 @@ var zone_members: Array = []     # [zona] -> Array[Vector2i]
 
 var dodo_pos: Vector2i
 var dodo_sprite: AnimatedSprite2D
+
+var coin_at: Dictionary = {}          # Vector2i -> índice da moeda
+var coin_sprites: Array[Sprite2D] = []
+var coin_collected: Array[bool] = []
+var coins_found: int = 0
 
 var unlocked_zone: int = 0
 var quadrants_done: Array[bool] = [false, false, false, false]
@@ -85,6 +104,7 @@ func _ready() -> void:
 	dodo_pos = Vector2i(GRID_WIDTH >> 1, GRID_HEIGHT >> 1)
 	_build_grid()
 	_classify_tiles()
+	_setup_coins()
 	_setup_dodo()
 	_setup_ui()
 	_center_grid()
@@ -152,6 +172,35 @@ func _classify_tiles() -> void:
 		zone_of.append(zrow)
 		quadrant_of.append(qrow)
 		zone_local_of.append(lrow)
+
+func _setup_coins() -> void:
+	var tex := _make_coin_texture()
+	for _i in COIN_COUNT:
+		var sp := Sprite2D.new()
+		sp.texture = tex
+		sp.visible = false
+		sp.z_index = 5   # acima dos tiles, que sobem pra 1 durante o pop
+		add_child(sp)
+		coin_sprites.append(sp)
+
+# Círculo chapado com borda escura e um brilho no canto superior esquerdo.
+func _make_coin_texture() -> ImageTexture:
+	var img := Image.create(COIN_PX, COIN_PX, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	var c := (COIN_PX - 1) * 0.5
+	var r := COIN_PX * 0.5
+	for y in COIN_PX:
+		for x in COIN_PX:
+			var d := Vector2(x - c, y - c).length()
+			if d > r - 0.5:
+				continue
+			if d > r - 1.4:
+				img.set_pixel(x, y, COIN_EDGE)
+			elif x - c < 0.0 and y - c < 0.0 and d <= r - 2.0:
+				img.set_pixel(x, y, COIN_SHINE)
+			else:
+				img.set_pixel(x, y, COIN_BODY)
+	return ImageTexture.create_from_image(img)
 
 func _setup_dodo() -> void:
 	var frames := SpriteFrames.new()
@@ -273,6 +322,11 @@ func _reset_run() -> void:
 	won = false
 	unlocked_zone = 0
 	quadrants_done = [false, false, false, false]
+	coin_at.clear()
+	coin_collected.clear()
+	coins_found = 0
+	for sp in coin_sprites:
+		sp.visible = false
 	position = base_position
 	end_overlay.visible = false
 	for row in tiles:
@@ -303,13 +357,14 @@ func _update_status() -> void:
 	for q in QUADRANT_COUNT:
 		var mark := "OK" if quadrants_done[q] else "--"
 		marks += "%s%s  " % [QUADRANT_NAMES[q], mark]
+	var purse := "Moedas: %d/%d" % [coins_found, COIN_COUNT]
 	if unlocked_zone >= ZONE_COUNT - 1:
-		status_label.text = "Zona %d/%d — %s    O caminho até o Dodo está aberto" % [
-			unlocked_zone + 1, ZONE_COUNT, ZONE_NAMES[unlocked_zone]
+		status_label.text = "Zona %d/%d — %s    %s    O caminho até o Dodo está aberto" % [
+			unlocked_zone + 1, ZONE_COUNT, ZONE_NAMES[unlocked_zone], purse
 		]
 	else:
-		status_label.text = "Zona %d/%d — %s    Quadrantes: %s" % [
-			unlocked_zone + 1, ZONE_COUNT, ZONE_NAMES[unlocked_zone], marks.strip_edges()
+		status_label.text = "Zona %d/%d — %s    %s    Quadrantes: %s" % [
+			unlocked_zone + 1, ZONE_COUNT, ZONE_NAMES[unlocked_zone], purse, marks.strip_edges()
 		]
 
 func _in_bounds(p: Vector2i) -> bool:
@@ -345,6 +400,48 @@ func _place_bombs(safe_center: Vector2i) -> void:
 			if not tiles[y][x].is_bomb:
 				tiles[y][x].adjacent_bombs = _count_adjacent_bombs(x, y)
 	print("Bombas plantadas: %d de %d casas." % [count, GRID_WIDTH * GRID_HEIGHT])
+
+# Roda depois de _place_bombs: as candidatas são as casas que sobraram. A
+# casa do Dodo fica de fora porque nunca é revelada — moeda ali seria
+# inalcançável.
+func _place_coins() -> void:
+	var candidates: Array[Vector2i] = []
+	for y in GRID_HEIGHT:
+		for x in GRID_WIDTH:
+			var p := Vector2i(x, y)
+			if p == dodo_pos:
+				continue
+			if tiles[y][x].is_bomb:
+				continue
+			candidates.append(p)
+
+	candidates.shuffle()
+	var count: int = mini(COIN_COUNT, candidates.size())
+	for i in count:
+		var p: Vector2i = candidates[i]
+		coin_at[p] = i
+		coin_collected.append(false)
+		coin_sprites[i].position = Vector2(p) * CELL_PX + COIN_OFFSET
+	print("Moedas espalhadas: %d." % count)
+
+# A moeda só aparece (e só conta) quando a casa dela abre de fato — a onda de
+# revelação vai "catando" as moedas no caminho, em vez de o placar saltar
+# antes de a tela mostrar o porquê.
+func _schedule_coin_pickup(idx: int, wait: float) -> void:
+	if wait <= 0.0:
+		_pick_up_coin(idx, run_id)
+		return
+	get_tree().create_timer(wait).timeout.connect(_pick_up_coin.bind(idx, run_id))
+
+func _pick_up_coin(idx: int, expected_run: int) -> void:
+	if run_id != expected_run:
+		return
+	if idx >= coin_collected.size() or coin_collected[idx]:
+		return
+	coin_collected[idx] = true
+	coins_found += 1
+	coin_sprites[idx].visible = true
+	_update_status()
 
 func _count_adjacent_bombs(cx: int, cy: int) -> int:
 	var n := 0
@@ -397,6 +494,7 @@ func _handle_left(p: Vector2i) -> void:
 
 	if not first_click_done:
 		_place_bombs(p)
+		_place_coins()
 		first_click_done = true
 
 	if t.is_bomb:
@@ -434,6 +532,8 @@ func _flood_reveal(start: Vector2i) -> void:
 		var delay: float = Tile.cascade_delay(ring)
 		max_delay = maxf(max_delay, delay)
 		t.reveal(delay)
+		if coin_at.has(p):
+			_schedule_coin_pickup(coin_at[p], t.time_until_open())
 		_mark_quadrant(p)
 		if t.adjacent_bombs == 0:
 			for dy in range(-1, 2):

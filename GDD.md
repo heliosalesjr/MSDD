@@ -10,7 +10,7 @@
 > **Atualização 2026-09-29:** cascata estendida ao protótipo 1 (§18 agora vale para os três modos).
 > **Atualização 2026-09-30:** §19 com o quarto protótipo (Save the Dodo — grid grande com liberação por zona/quadrante). Decisões em aberto deste protótipo estão na **§19.5**.
 > **Correção 2026-09-30:** `tile_hint.gdshader` descartava o `modulate` dos tiles (§18.3) — nenhum tingimento de tile jamais apareceu na tela até aqui, incluindo o clarão da cascata.
-> **Atualização 2026-10-02:** Save the Dodo perdeu o first-click-safe por região; só a primeira casa da partida é protegida (§19.2, §19.5 item 3).
+> **Atualização 2026-10-02:** Save the Dodo perdeu o first-click-safe por região; só a primeira casa da partida é protegida (§19.2, §19.5 item 3). No mesmo dia ganhou 50 moedas coletáveis (§19.1) — primeiro passo, ainda sem uso pra elas.
 
 ---
 
@@ -597,6 +597,11 @@ No grid 24×14, a maior cascata possível dá ~0.8s de ponta a ponta.
 - O **Dodo** é um `AnimatedSprite2D` (4 frames de 16×16, placeholder de galinha do Farm RPG pack) sempre visível no centro, sobre um tile tingido de dourado. A casa dele nunca é clicável nem revelada pelo flood.
 - **3 zonas concêntricas**, de fora pra dentro: **Orla** (1404 casas), **Mata** (828), **Clareira** (253).
 - **Condição de vitória:** revelar qualquer casa **ortogonalmente adjacente** ao Dodo. O Dodo e as 8 casas em volta nunca recebem bomba — se um dos quatro lados fosse mina, a vitória seria inalcançável em segurança.
+- **50 moedas** *(2026-10-02, primeiro passo)* — sorteadas **depois** das bombas, entre as casas que sobraram, pelo mesmo método (shuffle de candidatas). A casa do Dodo fica de fora porque nunca é revelada. Ao abrir uma casa com moeda, o sprite aparece e o placar sobe. Por ora as moedas **não fazem nada** além de contar: não há gasto, bônus nem efeito no gating.
+  - Sem sprite de moeda utilizável no projeto (as "Gold Stones" do Tiny Swords são 128×128 e borrariam num tile de 16px), a moeda é **desenhada em código**: 7×7 px, círculo com borda e um pixel de brilho.
+  - Fica no **canto superior-direito** da casa, não no centro — centrada, cobriria o número, que é a informação de que o jogador precisa pra deduzir.
+  - A coleta é **agendada pela onda de revelação** (via `Tile.time_until_open()`), não pelo instante lógico: num flood grande o placar sobe acompanhando as moedas que vão aparecendo, em vez de saltar antes de a tela mostrar o porquê.
+  - Distribuição resultante, por ser proporcional à área: ~28 na Orla, ~17 na Mata, ~5 na Clareira.
 - **Derrota:** clicar numa bomba. Revelação final irradia da bomba pisada (§18).
 - `R` reset, overlay de fim padrão do projeto, log narrativo em tom verde-folha.
 
