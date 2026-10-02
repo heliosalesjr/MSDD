@@ -47,18 +47,27 @@ const ZONE_SWEEP_DURATION := 0.55
 
 const DODO_SHEET := preload("res://assets/Farm RPG FREE 16x16 - Tiny Asset Pack/Farm RPG FREE 16x16 - Tiny Asset Pack/Farm Animals/Chicken Blonde  Green.png")
 # Moedas: espalhadas como as bombas, mas sorteadas DEPOIS delas, entre as
-# casas que sobraram. Sem sprite adequado no projeto (as "Gold Stones" do
-# Tiny Swords são 128x128 e borrariam num tile de 16px), a moeda é desenhada
-# em código — 9x9 nítidos, no tamanho certo.
+# casas que sobraram. Não há sprite de moeda utilizável no projeto, então ela
+# é desenhada em código — e desenhada GIRANDO, o que é o que dá o volume:
+# a largura aparente acompanha o cosseno do ângulo, e quando a moeda fica de
+# perfil o que sobra é a espessura dela. A moeda não permanece na casa; ela
+# salta e some, e o que fica é a contagem.
 const COIN_COUNT := 50
-const COIN_PX := 7
-# A moeda fica no canto superior-direito da casa, não no centro: centrada,
-# ela cobriria o número — que é justamente a informação de que o jogador
-# precisa pra deduzir onde pisar.
-const COIN_OFFSET := Vector2(11.0, 5.0)
-const COIN_EDGE := Color(0.40, 0.26, 0.04)
-const COIN_BODY := Color(0.96, 0.76, 0.20)
-const COIN_SHINE := Color(1.0, 0.94, 0.66)
+const COIN_PX := 15          # quase o tamanho de uma casa (16px)
+const COIN_FRAMES := 8       # um giro completo
+const COIN_SPIN_FPS := 14.0
+const COIN_POP_RISE := 22.0  # altura do salto, em px
+const COIN_POP_DURATION := 0.60
+# Espessura mínima: é ela que a moeda mostra quando está de perfil, e é o que
+# impede que o frame de 90° simplesmente desapareça.
+const COIN_HALF_THICKNESS := 1.6
+
+# Quatro tons pra dar volume à face, mais o contorno e a cor da espessura.
+const COIN_RIM := Color(0.34, 0.21, 0.03)
+const COIN_SHADE := Color(0.70, 0.46, 0.07)
+const COIN_BODY := Color(0.94, 0.72, 0.16)
+const COIN_SHINE := Color(1.00, 0.96, 0.72)
+const COIN_SIDE := Color(0.80, 0.55, 0.10)
 
 const DODO_FRAME_SIZE := 16
 const DODO_FRAME_COUNT := 4
@@ -77,7 +86,9 @@ var dodo_pos: Vector2i
 var dodo_sprite: AnimatedSprite2D
 
 var coin_at: Dictionary = {}          # Vector2i -> índice da moeda
-var coin_sprites: Array[Sprite2D] = []
+var coin_home: Array[Vector2] = []    # de onde cada moeda salta
+var coin_sprites: Array[AnimatedSprite2D] = []
+var coin_tweens: Array = []           # Tween do salto, ou null
 var coin_collected: Array[bool] = []
 var coins_found: int = 0
 
@@ -174,33 +185,63 @@ func _classify_tiles() -> void:
 		zone_local_of.append(lrow)
 
 func _setup_coins() -> void:
-	var tex := _make_coin_texture()
+	var frames := SpriteFrames.new()
+	frames.set_animation_loop("default", true)
+	frames.set_animation_speed("default", COIN_SPIN_FPS)
+	for tex in _make_coin_frames():
+		frames.add_frame("default", tex)
 	for _i in COIN_COUNT:
-		var sp := Sprite2D.new()
-		sp.texture = tex
+		var sp := AnimatedSprite2D.new()
+		sp.sprite_frames = frames
+		sp.animation = "default"
 		sp.visible = false
-		sp.z_index = 5   # acima dos tiles, que sobem pra 1 durante o pop
+		sp.z_index = 15   # acima dos tiles (que sobem pra 1 no pop), abaixo do Dodo
 		add_child(sp)
 		coin_sprites.append(sp)
+		coin_tweens.append(null)
 
-# Círculo chapado com borda escura e um brilho no canto superior esquerdo.
-func _make_coin_texture() -> ImageTexture:
-	var img := Image.create(COIN_PX, COIN_PX, false, Image.FORMAT_RGBA8)
-	img.fill(Color(0, 0, 0, 0))
+# Um giro completo em COIN_FRAMES quadros. O volume vem de três coisas:
+# a largura encolhendo com o cosseno, a face de trás recebendo menos luz, e
+# a espessura aparecendo quando a moeda passa de perfil.
+func _make_coin_frames() -> Array:
+	var out: Array = []
 	var c := (COIN_PX - 1) * 0.5
-	var r := COIN_PX * 0.5
-	for y in COIN_PX:
-		for x in COIN_PX:
-			var d := Vector2(x - c, y - c).length()
-			if d > r - 0.5:
-				continue
-			if d > r - 1.4:
-				img.set_pixel(x, y, COIN_EDGE)
-			elif x - c < 0.0 and y - c < 0.0 and d <= r - 2.0:
-				img.set_pixel(x, y, COIN_SHINE)
-			else:
-				img.set_pixel(x, y, COIN_BODY)
-	return ImageTexture.create_from_image(img)
+	var r := COIN_PX * 0.5 - 0.5
+	for f in COIN_FRAMES:
+		var theta := TAU * float(f) / float(COIN_FRAMES)
+		var cosv := cos(theta)
+		var half_w: float = maxf(absf(cosv) * r, COIN_HALF_THICKNESS)
+		var showing_back := cosv < 0.0
+		var edge_on := absf(cosv) < 0.34
+		var img := Image.create(COIN_PX, COIN_PX, false, Image.FORMAT_RGBA8)
+		img.fill(Color(0, 0, 0, 0))
+		for y in COIN_PX:
+			for x in COIN_PX:
+				var nx := (x - c) / half_w
+				var ny := (y - c) / r
+				var d := sqrt(nx * nx + ny * ny)
+				if d > 1.0:
+					continue
+				var col: Color
+				if d > 0.76:
+					col = COIN_RIM
+				elif edge_on:
+					# Quase de perfil: o que se vê é a lateral da moeda.
+					col = COIN_SIDE
+				else:
+					# Luz vinda do canto superior-esquerdo.
+					var lum := -(nx * 0.55 + ny * 0.78)
+					if showing_back:
+						lum -= 0.5
+					if lum > 0.45:
+						col = COIN_SHINE
+					elif lum > -0.15:
+						col = COIN_BODY
+					else:
+						col = COIN_SHADE
+				img.set_pixel(x, y, col)
+		out.append(ImageTexture.create_from_image(img))
+	return out
 
 func _setup_dodo() -> void:
 	var frames := SpriteFrames.new()
@@ -323,10 +364,16 @@ func _reset_run() -> void:
 	unlocked_zone = 0
 	quadrants_done = [false, false, false, false]
 	coin_at.clear()
+	coin_home.clear()
 	coin_collected.clear()
 	coins_found = 0
-	for sp in coin_sprites:
-		sp.visible = false
+	for i in coin_sprites.size():
+		var tw: Tween = coin_tweens[i]
+		if tw != null and tw.is_valid():
+			tw.kill()
+		coin_tweens[i] = null
+		coin_sprites[i].visible = false
+		coin_sprites[i].stop()
 	position = base_position
 	end_overlay.visible = false
 	for row in tiles:
@@ -357,7 +404,7 @@ func _update_status() -> void:
 	for q in QUADRANT_COUNT:
 		var mark := "OK" if quadrants_done[q] else "--"
 		marks += "%s%s  " % [QUADRANT_NAMES[q], mark]
-	var purse := "Moedas: %d/%d" % [coins_found, COIN_COUNT]
+	var purse := "Moedas: %d" % coins_found
 	if unlocked_zone >= ZONE_COUNT - 1:
 		status_label.text = "Zona %d/%d — %s    %s    O caminho até o Dodo está aberto" % [
 			unlocked_zone + 1, ZONE_COUNT, ZONE_NAMES[unlocked_zone], purse
@@ -421,7 +468,7 @@ func _place_coins() -> void:
 		var p: Vector2i = candidates[i]
 		coin_at[p] = i
 		coin_collected.append(false)
-		coin_sprites[i].position = Vector2(p) * CELL_PX + COIN_OFFSET
+		coin_home.append(Vector2(p) * CELL_PX + Vector2.ONE * CELL_PX * 0.5)
 	print("Moedas espalhadas: %d." % count)
 
 # A moeda só aparece (e só conta) quando a casa dela abre de fato — a onda de
@@ -440,8 +487,35 @@ func _pick_up_coin(idx: int, expected_run: int) -> void:
 		return
 	coin_collected[idx] = true
 	coins_found += 1
-	coin_sprites[idx].visible = true
 	_update_status()
+	_play_coin_pop(idx)
+
+# A moeda salta da casa, gira no ar e some. Nada fica para trás — o registro
+# da coleta é o contador.
+func _play_coin_pop(idx: int) -> void:
+	var sp: AnimatedSprite2D = coin_sprites[idx]
+	var old: Tween = coin_tweens[idx]
+	if old != null and old.is_valid():
+		old.kill()
+
+	sp.position = coin_home[idx]
+	sp.modulate = Color.WHITE
+	sp.visible = true
+	# Fase inicial aleatória: duas moedas coletadas juntas não giram em uníssono.
+	sp.frame = randi() % COIN_FRAMES
+	sp.play()
+
+	var tw := create_tween().set_parallel(true)
+	tw.tween_property(sp, "position", sp.position + Vector2(0.0, -COIN_POP_RISE), COIN_POP_DURATION) \
+		.set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_CUBIC)
+	tw.tween_property(sp, "modulate:a", 0.0, COIN_POP_DURATION * 0.55) \
+		.set_delay(COIN_POP_DURATION * 0.45)
+	tw.chain().tween_callback(_hide_coin.bind(idx))
+	coin_tweens[idx] = tw
+
+func _hide_coin(idx: int) -> void:
+	coin_sprites[idx].visible = false
+	coin_sprites[idx].stop()
 
 func _count_adjacent_bombs(cx: int, cy: int) -> int:
 	var n := 0
