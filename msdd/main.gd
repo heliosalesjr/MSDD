@@ -26,6 +26,44 @@ const KEY_COLORS := [
 
 const TIME_LIMIT := 15.0
 
+# --- Bônus de tempo (relógio) ---
+# O relógio é a válvula de escape da corrida: 5 segundos a mais por um desvio
+# que o jogador escolhe fazer. Ele só entra em cena depois do quinto clique —
+# antes disso o campo ainda está se abrindo e o tempo não aperta — e no máximo
+# três aparecem por partida, pra que a corrida continue sendo uma corrida.
+const CLOCK_BONUS_SECONDS := 5.0
+const CLOCK_MAX_PER_RUN := 3
+const CLOCK_MIN_CLICKS := 5
+# Chance de um relógio surgir num clique elegível.
+const CLOCK_SPAWN_CHANCE := 0.35
+# Um relógio esperando de cada vez: a decisão é sempre sobre um desvio só.
+const CLOCK_MAX_ACTIVE := 1
+# Distância (Chebyshev) do clique até a casa sorteada: longe o bastante pra ser
+# um desvio de verdade, perto o bastante pra caber na decisão do momento. A
+# casa nunca tem bomba — o relógio é socorro, não isca.
+const CLOCK_MIN_RANGE := 2
+const CLOCK_MAX_RANGE := 5
+
+const CLOCK_PX := 15
+const CLOCK_FRAME_COUNT := 8
+const CLOCK_FPS := 8.0
+const CLOCK_SCALE := 1.8
+# Flutuação sobre a casa fechada, pra ele não se confundir com um tile.
+const CLOCK_BOB_PX := 2.0
+const CLOCK_BOB_SPEED := 3.0
+const CLOCK_POP_UP_PX := 34.0
+const CLOCK_POP_TIME := 0.55
+# Quanto tempo o cronômetro fica verde depois de um bônus.
+const CLOCK_FLASH_TIME := 0.6
+
+const CLOCK_RIM := Color(0.88, 0.74, 0.26)
+const CLOCK_RIM_SHADE := Color(0.55, 0.42, 0.12)
+const CLOCK_FACE := Color(0.97, 0.96, 0.90)
+const CLOCK_FACE_SHADE := Color(0.78, 0.76, 0.70)
+const CLOCK_MARK := Color(0.45, 0.42, 0.40)
+const CLOCK_HAND := Color(0.13, 0.12, 0.16)
+const CLOCK_ACCENT := Color(0.45, 1.0, 0.55)
+
 var tiles: Array = []
 var first_click_done: bool = false
 var game_over: bool = false
@@ -39,6 +77,18 @@ var score: int = 0
 
 var time_remaining: float = 0.0
 var timer_running: bool = false
+
+# --- Bônus de tempo ---
+# Cliques que abriram alguma casa nesta partida (a porta de entrada do bônus).
+var clicks_done: int = 0
+var clocks_spawned: int = 0
+var clock_sprites: Array[AnimatedSprite2D] = []
+var clock_cell: Array[Vector2i] = []   # casa de cada relógio do pool
+var clock_waiting: Array[bool] = []    # ainda na mesa, esperando ser achado
+var clock_home: Array[Vector2] = []    # centro da casa, base da flutuação
+var clock_tweens: Array = []           # tween de entrada/saída, ou null
+var clock_at: Dictionary = {}          # Vector2i -> índice no pool
+var clock_flash_until_msec: int = 0
 
 var base_position: Vector2 = Vector2.ZERO
 
@@ -62,6 +112,7 @@ var end_subtitle_label: Label
 func _ready() -> void:
 	_build_grid()
 	_setup_key_sprites()
+	_setup_clock_sprites()
 	_setup_ui()
 	_center_grid()
 	get_viewport().size_changed.connect(_center_grid)
@@ -100,6 +151,83 @@ func _setup_key_sprites() -> void:
 		s.play()
 		add_child(s)
 		key_sprites.append(s)
+
+func _setup_clock_sprites() -> void:
+	var frames := SpriteFrames.new()
+	frames.set_animation_loop("default", true)
+	frames.set_animation_speed("default", CLOCK_FPS)
+	for tex in _make_clock_frames():
+		frames.add_frame("default", tex)
+
+	for _i in CLOCK_MAX_PER_RUN:
+		var s := AnimatedSprite2D.new()
+		s.sprite_frames = frames
+		s.animation = "default"
+		s.scale = Vector2.ONE * CLOCK_SCALE
+		s.visible = false
+		s.z_index = 5   # acima dos tiles, inclusive do pop deles (que sobe pra 1)
+		add_child(s)
+		clock_sprites.append(s)
+		clock_cell.append(Vector2i(-1, -1))
+		clock_waiting.append(false)
+		clock_home.append(Vector2.ZERO)
+		clock_tweens.append(null)
+
+# Um relógio de bolso desenhado na mão, no espírito das moedas do protótipo 4:
+# aro dourado, mostrador claro e os dois ponteiros girando — o de minutos dá a
+# volta completa em CLOCK_FRAME_COUNT quadros, o de horas anda um quarto disso.
+# É o giro que diz "tempo" de longe, mesmo num sprite de 15 px.
+func _make_clock_frames() -> Array:
+	var out: Array = []
+	var c := (CLOCK_PX - 1) * 0.5
+	var r := CLOCK_PX * 0.5 - 1.5
+	# O mostrador desce 1 px pra abrir espaço pra coroa no topo.
+	var center := Vector2(c, c + 1.0)
+	for f in CLOCK_FRAME_COUNT:
+		var img := Image.create(CLOCK_PX, CLOCK_PX, false, Image.FORMAT_RGBA8)
+		img.fill(Color(0, 0, 0, 0))
+		for y in CLOCK_PX:
+			for x in CLOCK_PX:
+				var d: float = Vector2(x, y).distance_to(center) / r
+				if d > 1.0:
+					continue
+				# Luz vinda do canto superior-esquerdo, como nas moedas.
+				var lum: float = -((x - center.x) * 0.55 + (y - center.y) * 0.78) / r
+				var col: Color
+				if d > 0.76:
+					col = CLOCK_RIM if lum > -0.25 else CLOCK_RIM_SHADE
+				else:
+					col = CLOCK_FACE if lum > -0.45 else CLOCK_FACE_SHADE
+				img.set_pixel(x, y, col)
+		# Marcas das 12, 3, 6 e 9.
+		for i in 4:
+			var a: float = TAU * float(i) / 4.0
+			_plot(img, center + Vector2(sin(a), -cos(a)) * r * 0.62, CLOCK_MARK)
+		# Coroa, no topo.
+		_plot(img, Vector2(center.x, center.y - r - 1.0), CLOCK_RIM)
+		_plot(img, Vector2(center.x, center.y - r - 2.0), CLOCK_RIM_SHADE)
+		# Ponteiros e o pino do centro.
+		var minute: float = TAU * float(f) / float(CLOCK_FRAME_COUNT)
+		_draw_hand(img, center, minute, r * 0.70)
+		_draw_hand(img, center, minute * 0.25, r * 0.45)
+		_plot(img, center, CLOCK_HAND)
+		out.append(ImageTexture.create_from_image(img))
+	return out
+
+# Ponteiro: uma linha do centro pra fora, amostrada de meio em meio pixel pra
+# não abrir buraco nas diagonais.
+func _draw_hand(img: Image, center: Vector2, angle: float, length: float) -> void:
+	var dir := Vector2(sin(angle), -cos(angle))
+	var steps: int = int(length * 2.0) + 1
+	for i in range(1, steps + 1):
+		_plot(img, center + dir * (length * float(i) / float(steps)), CLOCK_HAND)
+
+func _plot(img: Image, p: Vector2, col: Color) -> void:
+	var px: int = int(round(p.x))
+	var py: int = int(round(p.y))
+	if px < 0 or px >= img.get_width() or py < 0 or py >= img.get_height():
+		return
+	img.set_pixel(px, py, col)
 
 func _setup_ui() -> void:
 	ui_layer = CanvasLayer.new()
@@ -214,6 +342,7 @@ func _reset_run() -> void:
 	score = 0
 	time_remaining = TIME_LIMIT
 	timer_running = false
+	_reset_clocks()
 	position = base_position
 	danger_overlay.color.a = 0.0
 	end_overlay.visible = false
@@ -368,6 +497,7 @@ func _process(delta: float) -> void:
 			_timeout()
 
 	_update_dramatic_effects()
+	_update_clock_bob()
 	_update_ui()
 
 func _update_dramatic_effects() -> void:
@@ -395,7 +525,9 @@ func _update_ui() -> void:
 	keys_label.text = "%d / %d" % [keys_found_count, KEYS_TO_WIN]
 
 	var color := Color.WHITE
-	if time_remaining < 5.0:
+	if Time.get_ticks_msec() < clock_flash_until_msec:
+		color = CLOCK_ACCENT
+	elif time_remaining < 5.0:
 		color = Color(1.0, 0.25, 0.25)
 	elif time_remaining < 10.0:
 		color = Color(1.0, 0.85, 0.2)
@@ -429,6 +561,7 @@ func _handle_left(x: int, y: int) -> void:
 		return
 
 	last_click_pos = Vector2i(x, y)
+	clicks_done += 1
 
 	if not first_click_done:
 		_place_bombs(Vector2i(x, y))
@@ -441,7 +574,10 @@ func _handle_left(x: int, y: int) -> void:
 		return
 
 	_flood_reveal(x, y)
+	# A chave primeiro: ela recarrega o cronômetro, e o bônus soma por cima.
 	_check_keys_found()
+	_collect_clocks()
+	_maybe_spawn_clock()
 
 func _handle_right(x: int, y: int) -> void:
 	tiles[y][x].cycle_mark()
@@ -511,7 +647,9 @@ func _check_keys_found() -> void:
 		print("Chave %d/%d encontrada!" % [keys_found_count, KEYS_TO_WIN])
 
 	if any_found:
-		time_remaining = TIME_LIMIT
+		# Recarga, nunca corte: se os bônus deixaram o relógio acima do teto,
+		# a chave não pode cobrar essa sobra de volta.
+		time_remaining = maxf(time_remaining, TIME_LIMIT)
 		if keys_found_count >= KEYS_TO_WIN:
 			_win_run()
 
@@ -533,6 +671,216 @@ func _reveal_key_sprite(idx: int, expected_run: int) -> void:
 	if run_id != expected_run:
 		return
 	key_sprites[idx].visible = true
+
+# --- Bônus de tempo ---
+
+func _reset_clocks() -> void:
+	clicks_done = 0
+	clocks_spawned = 0
+	clock_at.clear()
+	clock_flash_until_msec = 0
+	for i in clock_sprites.size():
+		var tw: Tween = clock_tweens[i]
+		if tw != null and tw.is_valid():
+			tw.kill()
+		clock_tweens[i] = null
+		clock_cell[i] = Vector2i(-1, -1)
+		clock_waiting[i] = false
+		clock_home[i] = Vector2.ZERO
+		var s: AnimatedSprite2D = clock_sprites[i]
+		s.visible = false
+		s.stop()
+		s.modulate = Color.WHITE
+		s.scale = Vector2.ONE * CLOCK_SCALE
+
+# Depois do quinto clique, cada clique pode trazer um relógio. O sorteio roda
+# no fim do clique, com o campo já aberto: assim a casa escolhida pode ser
+# vizinha do que acabou de surgir, e o bônus aparece onde o jogador olha.
+func _maybe_spawn_clock() -> void:
+	if game_over or won_run:
+		return
+	if clocks_spawned >= CLOCK_MAX_PER_RUN:
+		return
+	if clicks_done < CLOCK_MIN_CLICKS:
+		return
+	if _waiting_clock_count() >= CLOCK_MAX_ACTIVE:
+		return
+	if randf() > CLOCK_SPAWN_CHANCE:
+		return
+	var cell := _pick_clock_cell()
+	if cell.x < 0:
+		return
+	_spawn_clock(cell)
+
+func _waiting_clock_count() -> int:
+	var n := 0
+	for waiting in clock_waiting:
+		if waiting:
+			n += 1
+	return n
+
+# Casa fechada, sem bomba e sem chave, a uma distância que faça do bônus um
+# desvio. Entre as candidatas, as que tocam o campo já aberto vêm primeiro:
+# um relógio no meio do breu não convida ninguém a ir buscá-lo.
+func _pick_clock_cell() -> Vector2i:
+	var touching: Array[Vector2i] = []
+	var loose: Array[Vector2i] = []
+	for y in GRID_HEIGHT:
+		for x in GRID_WIDTH:
+			var p := Vector2i(x, y)
+			var ring: int = maxi(
+				absi(p.x - last_click_pos.x),
+				absi(p.y - last_click_pos.y)
+			)
+			if ring < CLOCK_MIN_RANGE or ring > CLOCK_MAX_RANGE:
+				continue
+			var t: Tile = tiles[y][x]
+			if t.is_bomb or t.has_key:
+				continue
+			if t.state != Tile.State.HIDDEN and t.state != Tile.State.QUESTIONED:
+				continue
+			if clock_at.has(p):
+				continue
+			if _touches_revealed(p):
+				touching.append(p)
+			else:
+				loose.append(p)
+	var pool: Array[Vector2i] = loose
+	if not touching.is_empty():
+		pool = touching
+	if pool.is_empty():
+		return Vector2i(-1, -1)
+	return pool[randi() % pool.size()]
+
+func _touches_revealed(p: Vector2i) -> bool:
+	for dy in range(-1, 2):
+		for dx in range(-1, 2):
+			if dx == 0 and dy == 0:
+				continue
+			var np := p + Vector2i(dx, dy)
+			if np.x < 0 or np.x >= GRID_WIDTH or np.y < 0 or np.y >= GRID_HEIGHT:
+				continue
+			if tiles[np.y][np.x].state == Tile.State.REVEALED:
+				return true
+	return false
+
+func _spawn_clock(cell: Vector2i) -> void:
+	var idx := -1
+	for i in clock_sprites.size():
+		if clock_cell[i].x < 0:
+			idx = i
+			break
+	if idx < 0:
+		return
+
+	clocks_spawned += 1
+	clock_cell[idx] = cell
+	clock_waiting[idx] = true
+	clock_home[idx] = Vector2(cell) * CELL_PX + Vector2.ONE * CELL_PX * 0.5
+	clock_at[cell] = idx
+
+	var s: AnimatedSprite2D = clock_sprites[idx]
+	s.position = clock_home[idx]
+	s.modulate = Color.WHITE
+	s.scale = Vector2.ZERO
+	s.visible = true
+	# Fase inicial aleatória: dois relógios na tela não giram em uníssono.
+	s.frame = randi() % CLOCK_FRAME_COUNT
+	s.play()
+
+	# Pop de entrada com overshoot, pra o relógio se anunciar ao surgir.
+	var old: Tween = clock_tweens[idx]
+	if old != null and old.is_valid():
+		old.kill()
+	var tw := create_tween()
+	tw.tween_property(
+		s, "scale", Vector2.ONE * CLOCK_SCALE * 1.25, 0.14
+	).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_CUBIC)
+	tw.tween_property(
+		s, "scale", Vector2.ONE * CLOCK_SCALE, 0.10
+	).set_ease(Tween.EASE_IN_OUT).set_trans(Tween.TRANS_SINE)
+	clock_tweens[idx] = tw
+	print("Relógio %d/%d surgiu em %s." % [clocks_spawned, CLOCK_MAX_PER_RUN, cell])
+
+# Flutuação do relógio que ainda espera na mesa. Fica no _process em vez de num
+# tween em laço pra não disputar a posição com o salto da coleta.
+func _update_clock_bob() -> void:
+	var t: float = Time.get_ticks_msec() / 1000.0
+	for i in clock_sprites.size():
+		if not clock_waiting[i]:
+			continue
+		var phase: float = float(i) * 1.7
+		var dy: float = sin(t * CLOCK_BOB_SPEED + phase) * CLOCK_BOB_PX
+		clock_sprites[i].position = clock_home[i] + Vector2(0.0, dy)
+
+# Os segundos entram no instante em que a casa é aberta na lógica, igual às
+# chaves: a animação nunca cobra tempo do jogador. Só o salto do relógio espera
+# a tampa abrir, pra ele não saltar de cima de uma casa ainda fechada.
+func _collect_clocks() -> void:
+	for i in clock_sprites.size():
+		if not clock_waiting[i]:
+			continue
+		var cell: Vector2i = clock_cell[i]
+		var t: Tile = tiles[cell.y][cell.x]
+		if t.state != Tile.State.REVEALED:
+			continue
+		clock_waiting[i] = false
+		clock_at.erase(cell)
+		time_remaining += CLOCK_BONUS_SECONDS
+		clock_flash_until_msec = Time.get_ticks_msec() + int(CLOCK_FLASH_TIME * 1000.0)
+		_schedule_clock_pop(i, t.time_until_open())
+		print("Relógio achado: +%0.0fs (restam %0.1fs)." % [CLOCK_BONUS_SECONDS, time_remaining])
+
+func _schedule_clock_pop(idx: int, wait: float) -> void:
+	if wait <= 0.0:
+		_play_clock_pop(idx)
+		return
+	get_tree().create_timer(wait).timeout.connect(_on_clock_pop_due.bind(idx, run_id))
+
+func _on_clock_pop_due(idx: int, expected_run: int) -> void:
+	# Um reset durante a espera invalida esta coleta.
+	if run_id != expected_run:
+		return
+	_play_clock_pop(idx)
+
+# O relógio sobe da casa e se apaga, deixando um "+5s" no lugar: o aviso nasce
+# onde o olho já estava, não só no cronômetro lá em cima.
+func _play_clock_pop(idx: int) -> void:
+	var s: AnimatedSprite2D = clock_sprites[idx]
+	var old: Tween = clock_tweens[idx]
+	if old != null and old.is_valid():
+		old.kill()
+
+	s.position = clock_home[idx]
+	s.visible = true
+	var tw := create_tween()
+	tw.tween_property(
+		s, "position", clock_home[idx] + Vector2(0.0, -CLOCK_POP_UP_PX), CLOCK_POP_TIME
+	).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_CUBIC)
+	tw.parallel().tween_property(
+		s, "modulate:a", 0.0, CLOCK_POP_TIME * 0.7
+	).set_delay(CLOCK_POP_TIME * 0.3)
+	tw.chain().tween_callback(_retire_clock.bind(idx))
+	clock_tweens[idx] = tw
+	_show_bonus_popup(clock_home[idx])
+
+func _retire_clock(idx: int) -> void:
+	clock_sprites[idx].visible = false
+	clock_sprites[idx].stop()
+
+func _show_bonus_popup(at: Vector2) -> void:
+	var lbl := Label.new()
+	lbl.text = "+%0.0fs" % CLOCK_BONUS_SECONDS
+	lbl.add_theme_font_size_override("font_size", 22)
+	lbl.add_theme_color_override("font_color", CLOCK_ACCENT)
+	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	lbl.z_index = 6
+	lbl.position = at + Vector2(-20.0, -34.0)
+	add_child(lbl)
+	var tw := create_tween()
+	tw.tween_property(lbl, "position", lbl.position + Vector2(0.0, -26.0), 0.8).set_ease(Tween.EASE_OUT)
+	tw.parallel().tween_property(lbl, "modulate:a", 0.0, 0.5).set_delay(0.3)
+	tw.chain().tween_callback(lbl.queue_free)
 
 func _timeout() -> void:
 	game_over = true
