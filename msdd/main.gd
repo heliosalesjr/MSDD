@@ -27,34 +27,48 @@ const KEY_COLORS := [
 const TIME_LIMIT := 15.0
 
 # --- Bônus de tempo (relógio) ---
-# O relógio é a válvula de escape da corrida: 5 segundos a mais por um desvio
-# que o jogador escolhe fazer. Ele só entra em cena depois do quinto clique —
-# antes disso o campo ainda está se abrindo e o tempo não aperta — e no máximo
-# três aparecem por partida, pra que a corrida continue sendo uma corrida.
+# O relógio é a válvula de escape da corrida: 5 segundos a mais pra quem abre a
+# casa certa. Ele fica escondido dentro do tile, como as moedas do protótipo 4 —
+# só salta quando a casa abre. O que a regra controla é a hora de ESCONDER: nada
+# é alocado antes do quinto clique, senão a cascata de abertura engoliria os
+# bônus antes de o tempo começar a apertar. No máximo três por partida, pra que
+# a corrida continue sendo uma corrida.
 const CLOCK_BONUS_SECONDS := 5.0
 const CLOCK_MAX_PER_RUN := 3
 const CLOCK_MIN_CLICKS := 5
-# Chance de um relógio surgir num clique elegível.
-const CLOCK_SPAWN_CHANCE := 0.35
-# Um relógio esperando de cada vez: a decisão é sempre sobre um desvio só.
-const CLOCK_MAX_ACTIVE := 1
-# Distância (Chebyshev) do clique até a casa sorteada: longe o bastante pra ser
-# um desvio de verdade, perto o bastante pra caber na decisão do momento. A
-# casa nunca tem bomba — o relógio é socorro, não isca.
-const CLOCK_MIN_RANGE := 2
+# Chance de esconder um relógio num clique elegível.
+const CLOCK_SPAWN_CHANCE := 0.40
+# Quantos podem estar escondidos ao mesmo tempo, esperando ser achados.
+const CLOCK_MAX_HIDDEN := 2
+# Distância (Chebyshev) do clique até a casa escolhida. O relógio é escondido
+# na borda do campo aberto, no caminho que o jogador já está trilhando — longe
+# demais ele nunca seria achado, e um bônus que não se acha não ajuda ninguém.
+# A casa nunca tem bomba nem chave.
+const CLOCK_MIN_RANGE := 1
 const CLOCK_MAX_RANGE := 5
 
 const CLOCK_PX := 15
 const CLOCK_FRAME_COUNT := 8
 const CLOCK_FPS := 8.0
-const CLOCK_SCALE := 1.8
-# Flutuação sobre a casa fechada, pra ele não se confundir com um tile.
-const CLOCK_BOB_PX := 2.0
-const CLOCK_BOB_SPEED := 3.0
-const CLOCK_POP_UP_PX := 34.0
-const CLOCK_POP_TIME := 0.55
+const CLOCK_SCALE := 1.6
+# Giro um pouco diferente em cada relógio, pra dois achados juntos não
+# andarem em uníssono.
+const CLOCK_SPIN_SCALE := Vector2(0.80, 1.40)
+
+# O salto é a mesma parábola integrada das moedas: sai com CLOCK_LAUNCH, a
+# gravidade o traz de volta, quica uma vez e se apaga no apogeu do quique.
+const CLOCK_LAUNCH := 150.0        # velocidade de saída, px/s
+const CLOCK_GRAVITY := 340.0       # px/s²
+const CLOCK_RESTITUTION := 0.45    # quanto sobra da velocidade no quique
+const CLOCK_DRIFT_MAX := 12.0      # deriva lateral ao longo do voo, px
+const CLOCK_LAUNCH_JITTER := 0.12
+
 # Quanto tempo o cronômetro fica verde depois de um bônus.
-const CLOCK_FLASH_TIME := 0.6
+const CLOCK_FLASH_TIME := 0.7
+const CLOCK_ACCENT := Color(0.45, 1.0, 0.55)
+# O "+5s" sobe do lugar da casa e se apaga.
+const CLOCK_POPUP_RISE := 34.0
+const CLOCK_POPUP_TIME := 0.9
 
 const CLOCK_RIM := Color(0.88, 0.74, 0.26)
 const CLOCK_RIM_SHADE := Color(0.55, 0.42, 0.12)
@@ -62,7 +76,6 @@ const CLOCK_FACE := Color(0.97, 0.96, 0.90)
 const CLOCK_FACE_SHADE := Color(0.78, 0.76, 0.70)
 const CLOCK_MARK := Color(0.45, 0.42, 0.40)
 const CLOCK_HAND := Color(0.13, 0.12, 0.16)
-const CLOCK_ACCENT := Color(0.45, 1.0, 0.55)
 
 var tiles: Array = []
 var first_click_done: bool = false
@@ -79,14 +92,15 @@ var time_remaining: float = 0.0
 var timer_running: bool = false
 
 # --- Bônus de tempo ---
-# Cliques que abriram alguma casa nesta partida (a porta de entrada do bônus).
+# Cliques que abriram alguma casa nesta partida: é o que destrava a alocação.
 var clicks_done: int = 0
-var clocks_spawned: int = 0
+var clocks_placed: int = 0
 var clock_sprites: Array[AnimatedSprite2D] = []
 var clock_cell: Array[Vector2i] = []   # casa de cada relógio do pool
-var clock_waiting: Array[bool] = []    # ainda na mesa, esperando ser achado
-var clock_home: Array[Vector2] = []    # centro da casa, base da flutuação
-var clock_tweens: Array = []           # tween de entrada/saída, ou null
+var clock_hidden: Array[bool] = []     # escondido no campo, ainda não achado
+var clock_home: Array[Vector2] = []    # centro da casa, de onde ele salta
+var clock_tweens: Array = []           # tween do salto, ou null
+var clock_flight: Array = []           # parâmetros do voo atual
 var clock_at: Dictionary = {}          # Vector2i -> índice no pool
 var clock_flash_until_msec: int = 0
 
@@ -165,13 +179,14 @@ func _setup_clock_sprites() -> void:
 		s.animation = "default"
 		s.scale = Vector2.ONE * CLOCK_SCALE
 		s.visible = false
-		s.z_index = 5   # acima dos tiles, inclusive do pop deles (que sobe pra 1)
+		s.z_index = 10   # acima dos tiles, inclusive do pop deles (que sobe pra 1)
 		add_child(s)
 		clock_sprites.append(s)
 		clock_cell.append(Vector2i(-1, -1))
-		clock_waiting.append(false)
+		clock_hidden.append(false)
 		clock_home.append(Vector2.ZERO)
 		clock_tweens.append(null)
+		clock_flight.append({})
 
 # Um relógio de bolso desenhado na mão, no espírito das moedas do protótipo 4:
 # aro dourado, mostrador claro e os dois ponteiros girando — o de minutos dá a
@@ -497,7 +512,6 @@ func _process(delta: float) -> void:
 			_timeout()
 
 	_update_dramatic_effects()
-	_update_clock_bob()
 	_update_ui()
 
 func _update_dramatic_effects() -> void:
@@ -577,7 +591,7 @@ func _handle_left(x: int, y: int) -> void:
 	# A chave primeiro: ela recarrega o cronômetro, e o bônus soma por cima.
 	_check_keys_found()
 	_collect_clocks()
-	_maybe_spawn_clock()
+	_maybe_hide_clock()
 
 func _handle_right(x: int, y: int) -> void:
 	tiles[y][x].cycle_mark()
@@ -676,7 +690,7 @@ func _reveal_key_sprite(idx: int, expected_run: int) -> void:
 
 func _reset_clocks() -> void:
 	clicks_done = 0
-	clocks_spawned = 0
+	clocks_placed = 0
 	clock_at.clear()
 	clock_flash_until_msec = 0
 	for i in clock_sprites.size():
@@ -684,8 +698,9 @@ func _reset_clocks() -> void:
 		if tw != null and tw.is_valid():
 			tw.kill()
 		clock_tweens[i] = null
+		clock_flight[i] = {}
 		clock_cell[i] = Vector2i(-1, -1)
-		clock_waiting[i] = false
+		clock_hidden[i] = false
 		clock_home[i] = Vector2.ZERO
 		var s: AnimatedSprite2D = clock_sprites[i]
 		s.visible = false
@@ -693,35 +708,35 @@ func _reset_clocks() -> void:
 		s.modulate = Color.WHITE
 		s.scale = Vector2.ONE * CLOCK_SCALE
 
-# Depois do quinto clique, cada clique pode trazer um relógio. O sorteio roda
-# no fim do clique, com o campo já aberto: assim a casa escolhida pode ser
-# vizinha do que acabou de surgir, e o bônus aparece onde o jogador olha.
-func _maybe_spawn_clock() -> void:
+# A alocação roda no fim de cada clique, do quinto em diante. Esconder depois do
+# clique (e não no início da partida) é o que faz a regra valer: o relógio vai
+# pra uma casa que ainda está fechada agora, na borda do que acabou de abrir.
+func _maybe_hide_clock() -> void:
 	if game_over or won_run:
 		return
-	if clocks_spawned >= CLOCK_MAX_PER_RUN:
+	if clocks_placed >= CLOCK_MAX_PER_RUN:
 		return
 	if clicks_done < CLOCK_MIN_CLICKS:
 		return
-	if _waiting_clock_count() >= CLOCK_MAX_ACTIVE:
+	if _hidden_clock_count() >= CLOCK_MAX_HIDDEN:
 		return
 	if randf() > CLOCK_SPAWN_CHANCE:
 		return
 	var cell := _pick_clock_cell()
 	if cell.x < 0:
 		return
-	_spawn_clock(cell)
+	_hide_clock_at(cell)
 
-func _waiting_clock_count() -> int:
+func _hidden_clock_count() -> int:
 	var n := 0
-	for waiting in clock_waiting:
-		if waiting:
+	for hidden in clock_hidden:
+		if hidden:
 			n += 1
 	return n
 
-# Casa fechada, sem bomba e sem chave, a uma distância que faça do bônus um
-# desvio. Entre as candidatas, as que tocam o campo já aberto vêm primeiro:
-# um relógio no meio do breu não convida ninguém a ir buscá-lo.
+# Casa fechada, sem bomba e sem chave, perto do clique. Entre as candidatas, as
+# que tocam o campo já aberto vêm primeiro: são as que o jogador tem chance de
+# abrir em seguida, e um relógio escondido no breu morre sem ser achado.
 func _pick_clock_cell() -> Vector2i:
 	var touching: Array[Vector2i] = []
 	var loose: Array[Vector2i] = []
@@ -764,7 +779,8 @@ func _touches_revealed(p: Vector2i) -> bool:
 				return true
 	return false
 
-func _spawn_clock(cell: Vector2i) -> void:
+# Esconder é só contabilidade: nada aparece na tela até a casa abrir.
+func _hide_clock_at(cell: Vector2i) -> void:
 	var idx := -1
 	for i in clock_sprites.size():
 		if clock_cell[i].x < 0:
@@ -773,113 +789,132 @@ func _spawn_clock(cell: Vector2i) -> void:
 	if idx < 0:
 		return
 
-	clocks_spawned += 1
+	clocks_placed += 1
 	clock_cell[idx] = cell
-	clock_waiting[idx] = true
+	clock_hidden[idx] = true
 	clock_home[idx] = Vector2(cell) * CELL_PX + Vector2.ONE * CELL_PX * 0.5
 	clock_at[cell] = idx
-
-	var s: AnimatedSprite2D = clock_sprites[idx]
-	s.position = clock_home[idx]
-	s.modulate = Color.WHITE
-	s.scale = Vector2.ZERO
-	s.visible = true
-	# Fase inicial aleatória: dois relógios na tela não giram em uníssono.
-	s.frame = randi() % CLOCK_FRAME_COUNT
-	s.play()
-
-	# Pop de entrada com overshoot, pra o relógio se anunciar ao surgir.
-	var old: Tween = clock_tweens[idx]
-	if old != null and old.is_valid():
-		old.kill()
-	var tw := create_tween()
-	tw.tween_property(
-		s, "scale", Vector2.ONE * CLOCK_SCALE * 1.25, 0.14
-	).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_CUBIC)
-	tw.tween_property(
-		s, "scale", Vector2.ONE * CLOCK_SCALE, 0.10
-	).set_ease(Tween.EASE_IN_OUT).set_trans(Tween.TRANS_SINE)
-	clock_tweens[idx] = tw
-	print("Relógio %d/%d surgiu em %s." % [clocks_spawned, CLOCK_MAX_PER_RUN, cell])
-
-# Flutuação do relógio que ainda espera na mesa. Fica no _process em vez de num
-# tween em laço pra não disputar a posição com o salto da coleta.
-func _update_clock_bob() -> void:
-	var t: float = Time.get_ticks_msec() / 1000.0
-	for i in clock_sprites.size():
-		if not clock_waiting[i]:
-			continue
-		var phase: float = float(i) * 1.7
-		var dy: float = sin(t * CLOCK_BOB_SPEED + phase) * CLOCK_BOB_PX
-		clock_sprites[i].position = clock_home[i] + Vector2(0.0, dy)
+	print("Relógio %d/%d escondido em %s." % [clocks_placed, CLOCK_MAX_PER_RUN, cell])
 
 # Os segundos entram no instante em que a casa é aberta na lógica, igual às
 # chaves: a animação nunca cobra tempo do jogador. Só o salto do relógio espera
-# a tampa abrir, pra ele não saltar de cima de uma casa ainda fechada.
+# a tampa abrir, pra ele não pular de dentro de uma casa ainda fechada.
 func _collect_clocks() -> void:
 	for i in clock_sprites.size():
-		if not clock_waiting[i]:
+		if not clock_hidden[i]:
 			continue
 		var cell: Vector2i = clock_cell[i]
 		var t: Tile = tiles[cell.y][cell.x]
 		if t.state != Tile.State.REVEALED:
 			continue
-		clock_waiting[i] = false
+		clock_hidden[i] = false
 		clock_at.erase(cell)
 		time_remaining += CLOCK_BONUS_SECONDS
 		clock_flash_until_msec = Time.get_ticks_msec() + int(CLOCK_FLASH_TIME * 1000.0)
-		_schedule_clock_pop(i, t.time_until_open())
+		_schedule_clock_hop(i, t.time_until_open())
 		print("Relógio achado: +%0.0fs (restam %0.1fs)." % [CLOCK_BONUS_SECONDS, time_remaining])
 
-func _schedule_clock_pop(idx: int, wait: float) -> void:
+func _schedule_clock_hop(idx: int, wait: float) -> void:
 	if wait <= 0.0:
-		_play_clock_pop(idx)
+		_play_clock_hop(idx)
 		return
-	get_tree().create_timer(wait).timeout.connect(_on_clock_pop_due.bind(idx, run_id))
+	get_tree().create_timer(wait).timeout.connect(_on_clock_hop_due.bind(idx, run_id))
 
-func _on_clock_pop_due(idx: int, expected_run: int) -> void:
+func _on_clock_hop_due(idx: int, expected_run: int) -> void:
 	# Um reset durante a espera invalida esta coleta.
 	if run_id != expected_run:
 		return
-	_play_clock_pop(idx)
+	_play_clock_hop(idx)
 
-# O relógio sobe da casa e se apaga, deixando um "+5s" no lugar: o aviso nasce
-# onde o olho já estava, não só no cronômetro lá em cima.
-func _play_clock_pop(idx: int) -> void:
+# O relógio salta da casa, gira no ar, quica uma vez e se apaga — e deixa um
+# "+5s" subindo no lugar. Nada fica para trás: o registro do bônus é o
+# cronômetro, que pisca verde no mesmo instante.
+func _play_clock_hop(idx: int) -> void:
 	var s: AnimatedSprite2D = clock_sprites[idx]
 	var old: Tween = clock_tweens[idx]
 	if old != null and old.is_valid():
 		old.kill()
 
 	s.position = clock_home[idx]
+	s.scale = Vector2.ONE * CLOCK_SCALE
+	s.modulate = Color.WHITE
 	s.visible = true
+	s.frame = randi() % CLOCK_FRAME_COUNT
+	s.speed_scale = randf_range(CLOCK_SPIN_SCALE.x, CLOCK_SPIN_SCALE.y)
+	s.play()
+
+	var v0: float = CLOCK_LAUNCH * randf_range(
+		1.0 - CLOCK_LAUNCH_JITTER, 1.0 + CLOCK_LAUNCH_JITTER
+	)
+	var g: float = CLOCK_GRAVITY
+	var drift: float = randf_range(-CLOCK_DRIFT_MAX, CLOCK_DRIFT_MAX)
+	# Arco inteiro (subida + queda), mais a SUBIDA do quique: é nela que o
+	# relógio se apaga, então o voo termina no apogeu do quique.
+	var first_arc: float = 2.0 * v0 / g
+	var second_rise: float = CLOCK_RESTITUTION * v0 / g
+	var total: float = first_arc + second_rise
+
+	clock_flight[idx] = {
+		"v0": v0, "g": g, "drift": drift,
+		"total": total, "bounce": first_arc,
+	}
+
 	var tw := create_tween()
-	tw.tween_property(
-		s, "position", clock_home[idx] + Vector2(0.0, -CLOCK_POP_UP_PX), CLOCK_POP_TIME
-	).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_CUBIC)
-	tw.parallel().tween_property(
-		s, "modulate:a", 0.0, CLOCK_POP_TIME * 0.7
-	).set_delay(CLOCK_POP_TIME * 0.3)
+	# O tempo corre linear; quem desenha a curva é _clock_height.
+	tw.tween_method(_set_clock_flight.bind(idx), 0.0, total, total).set_trans(Tween.TRANS_LINEAR)
+	var fade_start: float = first_arc + second_rise * 0.30
+	tw.parallel().tween_property(s, "modulate:a", 0.0, total - fade_start).set_delay(fade_start)
 	tw.chain().tween_callback(_retire_clock.bind(idx))
 	clock_tweens[idx] = tw
+
 	_show_bonus_popup(clock_home[idx])
+
+# Altura acima da casa no instante t do voo: dois arcos balísticos, o do
+# lançamento e o do quique.
+func _clock_height(t: float, f: Dictionary) -> float:
+	var g: float = f["g"]
+	var bounce: float = f["bounce"]
+	if t < bounce:
+		return maxf(f["v0"] * t - 0.5 * g * t * t, 0.0)
+	var t2: float = t - bounce
+	var v1: float = f["v0"] * CLOCK_RESTITUTION
+	return maxf(v1 * t2 - 0.5 * g * t2 * t2, 0.0)
+
+func _set_clock_flight(t: float, idx: int) -> void:
+	var f: Dictionary = clock_flight[idx]
+	if f.is_empty():
+		return
+	# Sem força horizontal, a deriva é velocidade constante: linear no tempo.
+	var x: float = f["drift"] * (t / f["total"])
+	clock_sprites[idx].position = clock_home[idx] + Vector2(x, -_clock_height(t, f))
 
 func _retire_clock(idx: int) -> void:
 	clock_sprites[idx].visible = false
 	clock_sprites[idx].stop()
+	clock_flight[idx] = {}
 
+# O destaque do bônus: um "+5s" verde com contorno, subindo de onde o relógio
+# estava. É o único texto que nasce dentro do tabuleiro, então ele vai contra a
+# onda de tiles abrindo e precisa desse contorno pra se ler.
 func _show_bonus_popup(at: Vector2) -> void:
 	var lbl := Label.new()
 	lbl.text = "+%0.0fs" % CLOCK_BONUS_SECONDS
-	lbl.add_theme_font_size_override("font_size", 22)
+	lbl.add_theme_font_size_override("font_size", 26)
 	lbl.add_theme_color_override("font_color", CLOCK_ACCENT)
+	lbl.add_theme_color_override("font_outline_color", Color(0.04, 0.10, 0.04))
+	lbl.add_theme_constant_override("outline_size", 8)
 	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	lbl.z_index = 6
-	lbl.position = at + Vector2(-20.0, -34.0)
+	lbl.z_index = 11
+	lbl.position = at + Vector2(-24.0, -34.0)
 	add_child(lbl)
+
 	var tw := create_tween()
-	tw.tween_property(lbl, "position", lbl.position + Vector2(0.0, -26.0), 0.8).set_ease(Tween.EASE_OUT)
-	tw.parallel().tween_property(lbl, "modulate:a", 0.0, 0.5).set_delay(0.3)
+	tw.tween_property(
+		lbl, "position", lbl.position + Vector2(0.0, -CLOCK_POPUP_RISE), CLOCK_POPUP_TIME
+	).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_CUBIC)
+	tw.parallel().tween_property(
+		lbl, "modulate:a", 0.0, CLOCK_POPUP_TIME * 0.45
+	).set_delay(CLOCK_POPUP_TIME * 0.55)
 	tw.chain().tween_callback(lbl.queue_free)
 
 func _timeout() -> void:
