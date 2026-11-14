@@ -236,6 +236,7 @@ Anotações de como cada mecânica do original se traduz (ou não) pro contexto 
 - **First-click safety.** Manter — mesma lógica, entrada da dungeon é sempre segura.
 - **Solvabilidade.** Ver §11. Com múltiplos tipos, "solver lógico" fica mais complexo — talvez a decisão certa seja "informação suficiente pra decisão *ponderada*, não necessariamente única".
 - **Bandeira.** Original: informativa. MSDD: pode ganhar peso mecânico (ex: gastar um recurso pra "sondar" antes de revelar; bandeiras representam sondagens confirmadas).
+- **A casa fechada como recipiente.** No original, embaixo da tampa só existe mina ou número — a tampa esconde *informação*. O MSDD já usa a casa pra guardar **coisas** (chaves, moedas, relógios de +5s), e isso muda o que um clique é: além de uma dedução, ele é uma aposta com prêmio possível. O cuidado é não inverter a leitura do jogo — se abrir casa aleatória passa a valer a pena pelo prêmio, a dedução vira opcional. O freio usado no protótipo 1 (§15.6 do GDD) é a escassez: 3 relógios por partida, e nenhum antes do quinto clique.
 - **Cores dos números.** MSDD tem pixel art customizada — palette pode e deve seguir a convenção 1=azul, 2=verde, 3=vermelho pra aproveitar reconhecimento pré-existente. Divergir gratuitamente custa curva de aprendizado.
 
 ---

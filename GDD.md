@@ -11,6 +11,7 @@
 > **Atualização 2026-09-30:** §19 com o quarto protótipo (Save the Dodo — grid grande com liberação por zona/quadrante). Decisões em aberto deste protótipo estão na **§19.5**.
 > **Correção 2026-09-30:** `tile_hint.gdshader` descartava o `modulate` dos tiles (§18.3) — nenhum tingimento de tile jamais apareceu na tela até aqui, incluindo o clarão da cascata.
 > **Atualização 2026-10-02:** Save the Dodo perdeu o first-click-safe por região; só a primeira casa da partida é protegida (§19.2, §19.5 item 3). No mesmo dia ganhou 50 moedas coletáveis (§19.1) — primeiro passo, ainda sem uso pra elas.
+> **Atualização 2026-11-14:** Caça às chaves ganhou **bônus de tempo** — relógios escondidos valendo +5s, alocados só do quinto clique em diante (**§15.6**). É o primeiro coletável do projeto que tem efeito mecânico, e a primeira resposta ao gap de tempo anotado em §15.4.
 
 ---
 
@@ -236,8 +237,9 @@ Coisas que **ainda não decidimos** e que vão precisar de resposta antes ou dur
   - Tile da chave: 100% tint na cor.
   - Ortogonais adjacentes: metade da tile na cor, no lado que aponta pra chave.
   - Diagonais: quarto na tile, no canto que aponta pra chave.
-- **Timer de 15s** por chave. Reseta a cada find mas **continua correndo** (não pausa).
+- **Timer de 15s** por chave. Reseta a cada find mas **continua correndo** (não pausa). A recarga é `maxf(tempo, 15s)`, não atribuição: se os relógios (§15.6) deixaram o cronômetro acima do teto, a chave não cobra a sobra de volta.
 - **Score +100** por chave achada.
+- **Bônus de tempo: relógios de +5s** escondidos dentro de tiles, alocados do quinto clique em diante, no máximo 3 por partida — ver **§15.6**.
 - **Dramaticidade escalonada** conforme timer:
   - < 10s: cor do timer amarela.
   - < 7.5s: red overlay pulsante intensificando.
@@ -291,7 +293,7 @@ O protótipo **não é** o MSDD descrito nos §§1-11. É um teste técnico. Pri
 
 - **`modulate` multiplicativo não dessatura** — a chave "cinza" ficou sutil demais. Cores neutras vão precisar de shader de luminance, não modulate.
 - **Fonte padrão do Godot** é o gargalo estético mais visível. Pixel font resolveria grande parte do "cheiro de engine test".
-- **Timer 15s + grid grande** é apertado — jogador mal tem tempo de escanear. Quando entrar a camada de turnos do GDD, o modelo temporal precisa ser redesenhado.
+- **Timer 15s + grid grande** é apertado — jogador mal tem tempo de escanear. Quando entrar a camada de turnos do GDD, o modelo temporal precisa ser redesenhado. *(2026-11-14: os relógios da §15.6 são a primeira resposta a este gap. Mitigam, não resolvem — o teto de 15s continua o mesmo, e agora depende de sorte de posicionamento.)*
 - **Chord click** (§7 do `MINESWEEPER_REFERENCE.md`) não foi implementado — pode virar relevante se o board escalar pra tamanho Expert ou se turnos ficarem caros.
 
 ### 15.5 Próximos passos (post-proto)
@@ -305,6 +307,41 @@ Sugestões pra próxima iteração, na ordem crítica:
 6. **Chord click** — quando o board ficar denso o suficiente pra justificar.
 
 Racional da ordem: herói + turnos é a ponte conceitual mais importante (transforma o Minesweeper em RPG). Ícones e múltiplos tipos vêm depois, quando a mecânica base tá firme.
+
+### 15.6 Bônus de tempo — relógios (Nov/2026)
+
+**O gap que isto endereça.** §15.4 anotou que "timer 15s + grid grande é apertado — o jogador mal tem tempo de escanear". A correção óbvia seria subir `TIME_LIMIT`, e ela é a errada: afrouxa a corrida inteira por igual, de graça, inclusive os primeiros segundos, onde não há aperto nenhum. O relógio devolve tempo **a quem abriu casa** — o aperto continua existindo, mas passa a ser negociável pelo próprio jogo que o jogador está jogando.
+
+**Como funciona**
+
+- **+5s por relógio** (`CLOCK_BONUS_SECONDS`), **no máximo 3 por partida** (`CLOCK_MAX_PER_RUN`), somados ao cronômetro sem teto.
+- O relógio fica **escondido dentro de um tile**, invisível até a casa abrir — o mesmo modelo das moedas do Save the Dodo (§19.1), e não um ícone pousado sobre casa fechada. Quando a casa abre, ele **salta, gira no ar, quica uma vez e se apaga**, e um **"+5s" verde com contorno** sobe do lugar. O cronômetro pisca verde no mesmo instante (`CLOCK_FLASH_TIME`), porque o salto acontece dentro do tabuleiro e o número que mudou está no topo da tela.
+- **Alocação travada até o quinto clique** (`CLOCK_MIN_CLICKS`). Do quinto clique em diante, cada clique sorteia a 40% (`CLOCK_SPAWN_CHANCE`) se esconde um relógio, com até 2 escondidos ao mesmo tempo (`CLOCK_MAX_HIDDEN`).
+- A casa escolhida é **fechada, sem bomba e sem chave**, a 1–5 de Chebyshev do clique, preferindo as que **tocam o campo já aberto**.
+- Constantes todas agrupadas em `main.gd`, sob `# --- Bônus de tempo (relógio) ---`. O sprite não usa asset: é desenhado em código.
+
+**Decisões que não eram óbvias**
+
+**A regra é sobre quando *esconder*, não sobre quando *aparecer*.** As 5 chaves são sorteadas de uma vez, no primeiro clique (§15.1). Os relógios não podiam ser: o primeiro clique é `first click safe + zero`, então ele abre uma área grande de cascata, e um relógio sorteado antes disso teria boa chance de ser engolido por ela — gasto nos segundos em que ainda não há aperto, que é justamente onde ele não serve pra nada. Esconder *depois* de cada clique resolve isso sem precisar de nenhuma regra sobre a cascata: a casa escolhida é uma que **ainda está fechada agora**, com o campo já aberto na tela.
+
+**Escondido na borda do que abriu, não em qualquer lugar.** Um bônus invisível no meio do breu nunca é achado, e bônus que não se acha não ajuda ninguém. Entre as candidatas, as que tocam alguma casa revelada vêm primeiro (`_touches_revealed`) — são as que o jogador tem chance real de abrir nos próximos cliques. A lista "solta" fica como fallback pro caso de a fronteira não ter candidata válida.
+
+**Os 5 segundos entram na hora; só o salto espera a onda.** Mesma regra das chaves (§18.3): o estado lógico muda no instante do clique e a animação é escalonada, via `Tile.time_until_open()`. A alternativa — creditar o tempo quando o relógio salta — faria a animação **cobrar** do jogador o tempo que ela leva pra tocar, num modo em que décimos de segundo decidem a partida.
+
+**A casa do relógio nunca tem bomba.** Como ele é invisível, isto não vaza informação nenhuma: o jogador não sabe onde a casa segura está. É só a garantia de que o bônus é socorro e não isca — um relógio escondido embaixo de uma mina seria uma piada cruel que o jogador nunca entenderia, porque morreria sem nunca ver o relógio.
+
+**O bônus expôs um bug latente na chave.** `_check_keys_found` fazia `time_remaining = TIME_LIMIT`. Com relógios no jogo, chegar numa chave com 18s no cronômetro **cortaria** o jogador pra 15s — a recarga puniria quem jogou bem. Virou `maxf(time_remaining, TIME_LIMIT)`: recarga, nunca corte.
+
+**Sprite desenhado em código, e desenhado girando.** Não há relógio em nenhum dos packs do projeto. São 8 quadros de 15×15 gerados no boot: aro dourado com sombreado vindo do canto superior-esquerdo, mostrador claro, marcas das 12/3/6/9, coroa de relógio de bolso no topo, e **os dois ponteiros girando** — o de minutos dá a volta completa nos 8 quadros, o de horas anda um quarto disso. O giro é o que diz "tempo" a 15px de distância; sem ele o sprite seria só um círculo dourado, indistinguível de uma moeda.
+
+**O salto reaproveita a parábola das moedas, com faixas mais estreitas.** Mesma física integrada descrita em §19.1 (impulso, gravidade, um quique com restituição, fade no apogeu do quique, deriva linear). O que mudou foram as faixas de variação: nas moedas elas são largas de propósito, porque meia dúzia pode saltar junta e precisa se dessincronizar. Relógio é no máximo um por vez — a variação ali é tempero, não necessidade.
+
+**O que fica pro playtest**
+
+1. **Calibragem.** 40% por clique com teto de 2 escondidos e 3 por partida entrega tipicamente 2–3 relógios achados numa run. Se a corrida virar passeio, o parâmetro certo pra mexer primeiro é `CLOCK_MAX_PER_RUN` (quanto tempo extra existe no total), não a chance — a chance só mexe em quão cedo eles aparecem.
+2. **Teto de tempo.** Hoje o cronômetro pode passar de 15s sem limite. Dois relógios achados em sequência podem empilhar 25s, o que apaga a dramaticidade escalonada (§15.1) por um bom pedaço da partida. Alternativa: teto em `TIME_LIMIT + CLOCK_BONUS_SECONDS`.
+3. **Relógios não achados não aparecem na derrota.** As chaves perdidas surgem com a onda de revelação (§18), as moedas do Dodo não — segui as moedas. Mostrar os relógios perdidos ensinaria o jogador que havia bônus por perto, ao custo de mais um elemento na tela de derrota. É uma linha em `_reveal_board_on_loss`.
+4. **Ainda não há contador de relógios no HUD** — só o `+5s` no instante da coleta e o log no console. Se a leitura "quanto tempo eu já ganhei" importar, o lugar é ao lado do `keys_label`.
 
 ---
 
